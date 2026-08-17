@@ -247,6 +247,7 @@ function initEnvironmentUI() {
 function initAppBoot() {
     initEnvironmentUI();
     initLoginListeners();
+    initNotifDropdownListeners();
     checkAuth();
 }
 
@@ -667,6 +668,7 @@ function changeActiveStudent(studentId) {
 
 // Router & View Management with Strict Route Protection
 async function navigateView(viewName, paramId = null, updateHash = true) {
+    toggleNotificationDropdown(false);
     if (!currentUser) {
         showLoginScreen();
         return;
@@ -703,6 +705,7 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
     if (window.innerWidth < 768) {
         toggleMobileSidebar(false);
     }
+    toggleNotificationDropdown(false);
     
     document.querySelectorAll('.nav-item').forEach(btn => {
         btn.classList.remove('active');
@@ -11358,11 +11361,34 @@ async function submitCreateAssignment(e) {
 // ============================================================
 // BİLDİRİM MERKEZİ & AKSİYON SİSTEMİ FRONTEND MİMARİSİ
 // ============================================================
+// NOTIFICATIONS CORE (NAVBAR & DROPDOWN)
+// ============================================================
 let notificationCategoryFilter = 'ALL';
 let isNotifDropdownOpen = false;
 let notifPollInterval = null;
+let notifOutsideClickInitialized = false;
+
+function initNotifDropdownListeners() {
+    if (notifOutsideClickInitialized) return;
+    document.addEventListener('click', function(e) {
+        if (!isNotifDropdownOpen) return;
+        const panel = document.getElementById('notifDropdownPanel');
+        const btn = document.getElementById('notifBellBtn');
+        if (!panel || !btn) return;
+
+        // If click is inside notification panel or the bell button itself, keep open
+        if (panel.contains(e.target) || btn.contains(e.target)) {
+            return;
+        }
+
+        // Click is outside: close notification dropdown panel
+        toggleNotificationDropdown(false);
+    });
+    notifOutsideClickInitialized = true;
+}
 
 function initNotificationSystem() {
+    initNotifDropdownListeners();
     fetchNotificationsSummary();
     if (notifPollInterval) clearInterval(notifPollInterval);
     notifPollInterval = setInterval(fetchNotificationsSummary, 15000);
@@ -11412,6 +11438,7 @@ async function fetchNotificationsSummary() {
 }
 
 function toggleNotificationDropdown(forceState = null) {
+    initNotifDropdownListeners();
     const panel = document.getElementById('notifDropdownPanel');
     if (!panel) return;
 
