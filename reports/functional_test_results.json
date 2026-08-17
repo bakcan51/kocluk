@@ -1,0 +1,371 @@
+[
+  {
+    "page_flow": "Giriş Ekranı",
+    "steps": "Hatalı kullanıcı adı/şifre ile POST /api/auth/login",
+    "expected": "401/400 Hata ve success:false dönmeli",
+    "actual": "Status: 401, Msg: Kullanıcı adı veya şifre hatalı.",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Giriş Ekranı (Form Val)",
+    "steps": "Boş kullanıcı adı/şifre ile POST /api/auth/login",
+    "expected": "400/401 Hata dönmeli",
+    "actual": "Status: 401, Body: {\"error\":\"Kullan\\u0131c\\u0131 ad\\u0131 veya \\u015fifre hatal\\u0131.\",\"message\":\"Kullan\\u0131c\\u0131 ad\\u0131 veya \\u015fifre hatal\\u0131.\",\"success\":false}\n",
+    "severity": "Yüksek",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Giriş Ekranı (Koç)",
+    "steps": "Koç bilgileri ile POST /api/auth/login (ummu.akcan)",
+    "expected": "HTTP 200, success:true, role:COACH dönmeli",
+    "actual": "Status: 200, User: Ümmü Akcan (COACH)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Giriş Ekranı (Öğrenci)",
+    "steps": "Öğrenci bilgileri ile POST /api/auth/login (burak.akcan)",
+    "expected": "HTTP 200, success:true, role:STUDENT dönmeli",
+    "actual": "Status: 200, User: Burak Akcan (STUDENT)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Giriş Ekranı (Admin)",
+    "steps": "Admin bilgileri ile POST /api/auth/login (admin)",
+    "expected": "HTTP 200, success:true, role:ADMIN dönmeli",
+    "actual": "Status: 200, User: Sistem Yöneticisi (ADMIN)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Koç Paneli (Dashboard)",
+    "steps": "GET /api/koc/dashboard (Koç token)",
+    "expected": "HTTP 200 & koç özet istatistikleri",
+    "actual": "Status 200, Keys: ['kpis', 'students']",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Öğrenci Paneli (Dashboard)",
+    "steps": "GET /api/student/dashboard (Öğrenci token)",
+    "expected": "HTTP 200 & öğrenciye özel metrikler",
+    "actual": "Status 200, Keys: ['days_left', 'mock_history', 'pending_assignments', 'q_today', 'student', 'study_minutes_today']",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Admin Paneli (Dashboard)",
+    "steps": "GET /api/admin/dashboard (Admin token)",
+    "expected": "HTTP 200 & sistem metrikleri",
+    "actual": "Status 200, Keys: ['recent_logs', 'stats']",
+    "severity": "Yüksek",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Öğrencilerim & Risk",
+    "steps": "GET /api/students",
+    "expected": "HTTP 200 & liste dönmeli",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "{\"students\":[{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"burak.akcan@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":1,\"last_login_at\":\"2026-08-16 21:42:26\",\"name\":\"Burak Akcan\",\"school\":\"Fen Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Bilgisayar M\\u00fchendisli\\u011fi\",\"target_rank\":1500,\"target_score\":520.0,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":4,\"user_status\":\"ACTIVE\",\"username\":\"burak.akcan\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"elif.yilmaz@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":2,\"last_login_at\":null,\"name\":\"Elif Y\\u0131lmaz\",\"school\":\"Anadolu Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Elektrik-Elektronik M\\u00fch.\",\"target_rank\":2500,\"target_score\":510.0,\"target_university\":\"ODT\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":5,\"user_status\":\"ACTIVE\",\"username\":\"elif.yilmaz\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"mert.demir@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":3,\"last_login_at\":\"2026-08-16 06:57:19\",\"name\":\"Mert Demir\",\"school\":\"\\u00d6zel Kolej\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"End\\u00fcstri M\\u00fchendisli\\u011fi\",\"target_rank\":1000,\"target_score\":525.0,\"target_university\":\"Bo\\u011fazi\\u00e7i\",\"track\":\"SAYISAL\",\"user_id\":6,\"user_status\":\"ACTIVE\",\"username\":\"mert.demir\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"zeynep.kaya@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":4,\"last_login_at\":null,\"name\":\"Zeynep Kaya\",\"school\":\"Anadolu Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"\\u0130\\u015fletme\",\"target_rank\":3000,\"target_score\":480.0,\"target_university\":\"Bo\\u011fazi\\u00e7i\",\"track\":\"EA\",\"user_id\":7,\"user_status\":\"ACTIVE\",\"username\":\"zeynep.kaya\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"can.ozturk@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":5,\"last_login_at\":null,\"name\":\"Can \\u00d6zt\\u00fcrk\",\"school\":\"Atat\\u00fcrk Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Hukuk\",\"target_rank\":2000,\"target_score\":490.0,\"target_university\":\"Galatasaray\",\"track\":\"EA\",\"user_id\":8,\"user_status\":\"ACTIVE\",\"username\":\"can.ozturk\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"kaan.tekin@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":10,\"last_login_at\":null,\"name\":\"Kaan Tekin\",\"school\":\"Fen Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Makine M\\u00fchendisli\\u011fi\",\"target_rank\":1800,\"target_score\":515.0,\"target_university\":\"Bilkent\",\"track\":\"SAYISAL\",\"user_id\":13,\"user_status\":\"ACTIVE\",\"username\":\"kaan.tekin\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"ayse.demir@lgs.com\",\"exam_system\":\"YKS\",\"grade\":\"8. S\\u0131n\\u0131f\",\"id\":11,\"last_login_at\":null,\"name\":\"Ay\\u015fe Demir\",\"school\":\"\\u00d6zel Bilim Ortaokulu\",\"start_date\":\"2026-07-14\",\"surname\":null,\"target_department\":null,\"target_rank\":null,\"target_score\":null,\"target_university\":null,\"track\":\"SAYISAL\",\"user_id\":14,\"user_status\":\"ACTIVE\",\"username\":\"ayse.demir\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"zeynep.ak@lgs.com\",\"exam_system\":\"LGS\",\"grade\":\"8. S\\u0131n\\u0131f\",\"id\":12,\"last_login_at\":null,\"name\":\"Zeynep Ak\",\"school\":\"Atat\\u00fcrk Ortaokulu\",\"start_date\":\"2026-07-14\",\"surname\":null,\"target_department\":null,\"target_rank\":null,\"target_score\":null,\"target_university\":null,\"track\":\"SAYISAL\",\"user_id\":15,\"user_status\":\"ACTIVE\",\"username\":\"zeynep.ak\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":14,\"last_login_at\":null,\"name\":\"Kemal\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Y\\u0131lmaz\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":18,\"user_status\":\"ACTIVE\",\"username\":\"kemal.yilmaz\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":15,\"last_login_at\":null,\"name\":\"Bora\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Arslan\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":20,\"user_status\":\"ACTIVE\",\"username\":\"bora.arslan2\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":16,\"last_login_at\":null,\"name\":\"Bora\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Arslan\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":23,\"user_status\":\"ACTIVE\",\"username\":\"bora.arslan99\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":17,\"last_login_at\":null,\"name\":\"QA Student 2577\",\"school\":null,\"start_date\":\"2026-08-16\",\"surname\":\"\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":24,\"user_status\":\"ACTIVE\",\"username\":\"qa_stu_2577\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":18,\"last_login_at\":null,\"name\":\"QA Student 2596\",\"school\":null,\"start_date\":\"2026-08-16\",\"surname\":\"\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":25,\"user_status\":\"ACTIVE\",\"username\":\"qa_stu_2596\"}]}\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Haftalık Program",
+    "steps": "GET /api/haftalik-program?student_id=1 (Öğrenci token)",
+    "expected": "HTTP 200 & haftalık ders programı",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Haftalık Program (Ekleme)",
+    "steps": "POST /api/haftalik-program (XSS, Türkçe Karakter, Emoji)",
+    "expected": "HTTP 200/201 & Program ögesi eklendi",
+    "actual": "Status 200",
+    "severity": "Yüksek",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Ödev Yönetimi",
+    "steps": "GET /api/odevler?student_id=1 (Öğrenci token)",
+    "expected": "HTTP 200 & ödev listesi",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Ödev Yönetimi (Ekleme)",
+    "steps": "POST /api/odevler (Koç tarafından ödev atama)",
+    "expected": "HTTP 200/201 & Ödev ID oluşturuldu",
+    "actual": "Status 200, Res: {'id': 32, 'message': 'Ödev başarıyla oluşturuldu ve öğrenciye atandı!'}",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Ödev Yönetimi (Güncelleme)",
+    "steps": "PUT /api/odevler (ID=32)",
+    "expected": "HTTP 200 & Durum güncellendi",
+    "actual": "Status 500",
+    "severity": "Yüksek",
+    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Ödev Yönetimi (Silme)",
+    "steps": "DELETE /api/odevler?id=32",
+    "expected": "HTTP 200 & Ödev silindi",
+    "actual": "Status 500",
+    "severity": "Yüksek",
+    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Müfredat & Kaynak Takibi",
+    "steps": "GET /api/mufredat?student_id=1 (Öğrenci token)",
+    "expected": "HTTP 200 & Müfredat ders/konu ağacı",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Müfredat (Konu Durumu)",
+    "steps": "POST /api/mufredat/konu-durum-guncelle",
+    "expected": "HTTP 200 & Durum 'TAMAMLANDI' güncellendi",
+    "actual": "Status 400",
+    "severity": "Yüksek",
+    "notes": "{\"error\":\"Eksik parametre\"}\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Kaynak Havuzum",
+    "steps": "GET /api/kaynak-havuzu (Koç token)",
+    "expected": "HTTP 200 & Kaynak kütüphanesi",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Kaynak Havuzum (Ekleme)",
+    "steps": "POST /api/kaynak-havuzu",
+    "expected": "HTTP 200/201 dönmeli",
+    "actual": "Status 400",
+    "severity": "Yüksek",
+    "notes": "{\"error\":\"Kaynak ad\\u0131 ve ders se\\u00e7imi zorunludur.\"}\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Deneme & Konu Analizi",
+    "steps": "GET /api/deneme?student_id=1 (Öğrenci token)",
+    "expected": "HTTP 200 & Deneme sonuçları",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Deneme (Ekleme & Net Hesabı)",
+    "steps": "POST /api/deneme (Net ve Puan hesabı)",
+    "expected": "HTTP 200/201 & Otomatik Net/Puan hesabı",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Deneme Karşılaştırma",
+    "steps": "GET /api/deneme/compare?student_id=1",
+    "expected": "HTTP 200 & Gelişim analizi verileri",
+    "actual": "Status 400",
+    "severity": "Yüksek",
+    "notes": "{\"error\":\"Kar\\u015f\\u0131la\\u015ft\\u0131rma i\\u00e7in iki deneme ID zorunludur.\"}\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Deneme (Silme)",
+    "steps": "DELETE /api/deneme/105",
+    "expected": "HTTP 200 & Deneme silindi",
+    "actual": "Status 200",
+    "severity": "Orta",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Akademik Raporlar",
+    "steps": "GET /api/raporlar?student_id=1 (Koç token)",
+    "expected": "HTTP 200 & Performans raporu",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "YKS Puan Simülatörü",
+    "steps": "POST /api/simulasyon/puan-hesapla (Geçerli Net/OBP)",
+    "expected": "HTTP 200 & Hesaplanan puanlar ve sıralama",
+    "actual": "Status 200, Puanlar: {'estimated_rank': 150000, 'obp_added': 55.5, 'tyt_score': 100.0, 'yks_say_placement_score': 95.5}",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Kitap Okuma Takibi",
+    "steps": "GET /api/kitaplar?student_id=1",
+    "expected": "HTTP 200 & Kitap listesi",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Kitap Okuma (Ekleme)",
+    "steps": "POST /api/kitaplar (Yeni Kitap)",
+    "expected": "HTTP 200/201 & Kitap eklendi",
+    "actual": "Status 500",
+    "severity": "Yüksek",
+    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Mesajlaşma (Kişiler)",
+    "steps": "GET /api/mesajlar/contacts",
+    "expected": "HTTP 200 & Kişi listesi",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Mesajlaşma (Mesaj Geçmişi)",
+    "steps": "GET /api/mesajlar",
+    "expected": "HTTP 200 & Mesajlar",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Mesajlaşma (Mesaj Gönderme)",
+    "steps": "POST /api/mesajlar (Mesaj iletimi, XSS, Emoji, Türkçe)",
+    "expected": "HTTP 200/201 & Mesaj iletildi",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Çalışma Zamanlayıcısı",
+    "steps": "POST /api/timer (Çalışma Seansı)",
+    "expected": "HTTP 200/201 & Seans kaydedildi",
+    "actual": "Status 500",
+    "severity": "Yüksek",
+    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
+    "pass": false
+  },
+  {
+    "page_flow": "Soru Takibi (Listeleme)",
+    "steps": "GET /api/soru-takibi?student_id=1",
+    "expected": "HTTP 200 & Çözülen soru sayıları",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Soru Takibi (Ekleme)",
+    "steps": "POST /api/soru-takibi",
+    "expected": "HTTP 200/201 & Soru sayısı eklendi",
+    "actual": "Status 500",
+    "severity": "Yüksek",
+    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
+    "pass": false
+  },
+  {
+    "page_flow": "AI Koç Asistanı",
+    "steps": "POST /api/ai/analyze-student",
+    "expected": "HTTP 200 & AI tavsiye yanıtı",
+    "actual": "Status 200",
+    "severity": "Yüksek",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Bildirimler",
+    "steps": "GET /api/notifications",
+    "expected": "HTTP 200 & Bildirim listesi",
+    "actual": "Status 200",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Bildirimler (Tümünü Okundu Yap)",
+    "steps": "POST /api/notifications/read-all",
+    "expected": "HTTP 200 & Okundu işaretlendi",
+    "actual": "Status 200",
+    "severity": "Orta",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Rol İzolasyonu (Öğrenci Veri Koruma)",
+    "steps": "Öğrenci 4 -> GET /api/students/2 (Öğrenci 5)",
+    "expected": "HTTP 403 Forbidden / Yetkisiz",
+    "actual": "Status 403 (Erişim engellendi)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Rol İzolasyonu (Koç Paneli Erişimi)",
+    "steps": "Öğrenci -> GET /api/koc/dashboard",
+    "expected": "HTTP 403 Forbidden / Yetkisiz",
+    "actual": "Status 403 (Erişim reddedildi)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Rol İzolasyonu (Admin Paneli Erişimi)",
+    "steps": "Öğrenci -> GET /api/admin/users",
+    "expected": "HTTP 403 Forbidden / Yetkisiz",
+    "actual": "Status 403 (Erişim reddedildi)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Rol İzolasyonu (Koç -> Admin Paneli Erişimi)",
+    "steps": "Koç -> GET /api/admin/users",
+    "expected": "HTTP 403 Forbidden / Yetkisiz",
+    "actual": "Status 403 (Erişim reddedildi)",
+    "severity": "Kritik",
+    "notes": "Yok",
+    "pass": true
+  },
+  {
+    "page_flow": "Admin Yetkilendirme",
+    "steps": "Admin -> GET /api/admin/users",
+    "expected": "HTTP 200 & Kullanıcı listesi",
+    "actual": "Status 200",
+    "severity": "Yüksek",
+    "notes": "Yok",
+    "pass": true
+  }
+]

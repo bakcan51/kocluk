@@ -1,0 +1,2 @@
+VISUAL MOCK: Page=AcademicReports, Theme=dark, Viewport=375x667
+Status=PASS

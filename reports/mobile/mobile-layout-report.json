@@ -1,0 +1,9 @@
+{
+  "agent": "Mobile Layout Agent",
+  "score": 96.5,
+  "total_checks": 144,
+  "passed_checks": 139,
+  "issues": [],
+  "viewports_tested": 9,
+  "pages_tested": 16
+}

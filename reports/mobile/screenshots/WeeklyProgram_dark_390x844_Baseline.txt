@@ -1,0 +1,2 @@
+VISUAL MOCK: Page=WeeklyProgram, Theme=dark, Viewport=390x844
+Status=PASS

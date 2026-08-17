@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile Responsive QA Master Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #08111F; color: #F8FAFC; margin: 0; padding: 32px; }
+        .container { max-width: 1100px; margin: 0 auto; }
+        h1 { font-size: 28px; margin-bottom: 8px; color: #FFFFFF; display: flex; align-items: center; justify-content: space-between; }
+        .subtitle { color: #94A3B8; font-size: 14px; margin-bottom: 32px; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .metric-card { background: #0F1A2B; border: 1px solid #24324A; padding: 20px; border-radius: 12px; text-align: center; }
+        .metric-value { font-size: 32px; font-weight: 800; color: #60A5FA; margin-top: 4px; }
+        .metric-label { font-size: 12px; color: #94A3B8; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; }
+        .status-pass { color: #34D399; font-weight: 800; font-size: 20px; }
+        .status-fail { color: #F87171; font-weight: 800; font-size: 20px; }
+        .section-title { font-size: 20px; font-weight: 700; margin-top: 40px; margin-bottom: 16px; border-bottom: 1px solid #24324A; padding-bottom: 8px; }
+        .issue-card { background: #0F1A2B; border-left: 4px solid #60A5FA; padding: 16px; margin-bottom: 16px; border-radius: 8px; border-top: 1px solid #24324A; border-right: 1px solid #24324A; border-bottom: 1px solid #24324A; }
+        .issue-card.sev-p0 { border-left-color: #EF4444; }
+        .issue-card.sev-p1 { border-left-color: #F97316; }
+        .issue-card.sev-p2 { border-left-color: #FBBF24; }
+        .sev-badge { padding: 2px 8px; border-radius: 4px; font-weight: 800; font-size: 11px; }
+        .sev-p0 { background: #7F1D1D; color: #FCA5A5; }
+        .sev-p1 { background: #7C2D12; color: #FDBA74; }
+        .sev-p2 { background: #78350F; color: #FDE68A; }
+        .issue-header { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+        .issue-page { font-weight: 700; color: #F8FAFC; }
+        .issue-vp { color: #94A3B8; font-size: 12px; }
+        .issue-problem, .issue-expected, .issue-actual, .issue-fix { font-size: 13px; margin-top: 6px; line-height: 1.5; }
+        .issue-fix code { background: #111D30; color: #38BDF8; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+        .no-issues { background: #064E3B; color: #A7F3D0; padding: 20px; border-radius: 12px; text-align: center; font-weight: 700; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <span>📱 YKS & LGS KOÇLUK — MOBILE RESPONSIVE QA REPORT</span>
+            <span class="status-pass">🟢 PASS</span>
+        </h1>
+        <div class="subtitle">Rapor Oluşturulma Tarihi: 16.08.2026 10:46:57 • Test Viewportları: 320px - 1440px (9 Viewport)</div>
+
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">GENEL QA SKORU</div>
+                <div class="metric-value">99.2%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">LAYOUT SKORU</div>
+                <div class="metric-value">96.5%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">INTERACTION SKORU</div>
+                <div class="metric-value">99.6%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">NAVIGATION SKORU</div>
+                <div class="metric-value">100.0%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">FORM & MODAL SKORU</div>
+                <div class="metric-value">100.0%</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">VISUAL SKORU</div>
+                <div class="metric-value">100.0%</div>
+            </div>
+        </div>
+
+        <div class="section-title">DETAYLI BUG VE İYİLEŞTİRME LİSTESİ (1 HATA)</div>
+        
+            <div class="issue-card sev-p2">
+                <div class="issue-header">
+                    <span class="sev-badge sev-p2">P3</span>
+                    <span class="issue-page">Multiple Views</span>
+                    <span class="issue-vp">[375x667 (Mobile)]</span>
+                </div>
+                <div class="issue-problem"><strong>Problem:</strong> Detected 17 small icon/action buttons that may fail 44x44px touch target guidelines</div>
+                <div class="issue-expected"><strong>Beklenen:</strong> All touch targets should have at least 44x44px hit area or py-2 px-3 padding</div>
+                <div class="issue-actual"><strong>Mevcut:</strong> 17 small target buttons found</div>
+                <div class="issue-fix"><strong>Çözüm Önerisi:</strong> <code>Ensure py-2 px-3 or minimum p-2 padding on icon buttons</code></div>
+            </div>
+            
+    </div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Python
+venv/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# SQLite journals
+*.db-shm
+*.db-wal
+scratch_test_yks.db*
+
+# Scratch & Temporary Folders
+scratch/
+backup/
+
+# OS Specific
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

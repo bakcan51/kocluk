@@ -1,0 +1,15 @@
+{
+  "agent": "Mobile Visual Regression Agent",
+  "score": 100.0,
+  "screenshots_generated": 60,
+  "themes_audited": [
+    "dark",
+    "light"
+  ],
+  "viewports_audited": [
+    "390x844_Baseline",
+    "375x667_Standard",
+    "430x932_Max"
+  ],
+  "issues": []
+}

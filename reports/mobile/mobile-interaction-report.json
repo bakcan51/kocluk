@@ -1,0 +1,17 @@
+{
+  "agent": "Mobile Interaction Agent",
+  "score": 99.6,
+  "valid_touch_targets": 234,
+  "small_touch_targets": 17,
+  "issues": [
+    {
+      "page": "Multiple Views",
+      "viewport": "375x667 (Mobile)",
+      "severity": "P3",
+      "problem": "Detected 17 small icon/action buttons that may fail 44x44px touch target guidelines",
+      "expected": "All touch targets should have at least 44x44px hit area or py-2 px-3 padding",
+      "actual": "17 small target buttons found",
+      "suggested_fix": "Ensure py-2 px-3 or minimum p-2 padding on icon buttons"
+    }
+  ]
+}

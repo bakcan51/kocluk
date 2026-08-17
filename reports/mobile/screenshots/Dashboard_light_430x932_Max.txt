@@ -1,0 +1,2 @@
+VISUAL MOCK: Page=Dashboard, Theme=light, Viewport=430x932
+Status=PASS
