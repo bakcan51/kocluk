@@ -3121,7 +3121,7 @@ async function renderReportsView() {
                 📅 Aylık & 3 Aylık Dönemsel
             </button>
             <button onclick="setReportsTab('AICOACH')" class="px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentReportsTab === 'AICOACH' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white hover:bg-slate-900'}">
-                🤖 AI Koç Veri Motoru (v1.0)
+                🤖 Yapay Zekâ Koç Veri Motoru (v1.0)
             </button>
         </div>
         `;
@@ -3313,7 +3313,7 @@ function renderReportsSubjectsTabHtml(data) {
                                 <td class="py-3 px-3 text-center text-indigo-300 font-bold">${s.average_net.toFixed(2)}</td>
                                 <td class="py-3 px-3 text-center text-slate-300">${s.last_3_average.toFixed(2)}</td>
                                 <td class="py-3 px-3 text-center text-slate-300">${s.last_5_average.toFixed(2)}</td>
-                                <td class="py-3 px-3 text-center text-slate-400 text-[10px]">${s.volatility}</td>
+                                <td class="py-3 px-3 text-center text-slate-300 text-[11px] font-semibold">${s.volatility === 'STABLE' ? 'Düşük' : (s.volatility === 'MEDIUM' ? 'Orta' : (s.volatility === 'VOLATILE' ? 'Yüksek' : s.volatility))}</td>
                                 <td class="py-3 px-3 text-right whitespace-nowrap">
                                     <span class="text-[10px] font-extrabold px-2.5 py-1 rounded-lg border ${badgeColor}">
                                         ${s.trend === 'UP' ? '↗ Yükseliyor' : (s.trend === 'DOWN' ? '↘ Geriliyor' : '→ Stabil')}
@@ -3443,13 +3443,13 @@ function renderReportsAICoachTabHtml(data) {
                 🤖
             </div>
             <div>
-                <h4 class="text-sm font-bold text-violet-300">AI Koç Asistanı Analitik Veri Bağlamı (Context v1.0)</h4>
-                <p class="text-xs text-slate-300">AI Koç'un öğrenci değerlendirmesinde kullandığı çok boyutlu zaman pencereli veri paketidir.</p>
+                <h4 class="text-sm font-bold text-violet-300">Yapay Zekâ Koç Asistanı Analitik Veri Bağlamı (v1.0)</h4>
+                <p class="text-xs text-slate-300">Yapay Zekâ Koç'un öğrenci değerlendirmesinde kullandığı çok boyutlu zaman pencereli veri paketidir.</p>
             </div>
         </div>
 
         <button onclick="navigateView('ai-coach', ${profile.student_id})" class="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow transition flex items-center gap-1.5 whitespace-nowrap">
-            <i data-lucide="sparkles" class="w-4 h-4"></i> 🤖 AI Koç İle Detaylı İncele
+            <i data-lucide="sparkles" class="w-4 h-4"></i> 🤖 Yapay Zekâ Koç İle Detaylı İncele
         </button>
     </div>
 
@@ -3472,7 +3472,7 @@ function renderReportsAICoachTabHtml(data) {
     </div>
 
     <div class="glass-card p-6 border border-slate-800">
-        <h3 class="text-sm font-bold text-white mb-3">📦 AI ASİSTANINA İLETİLEN YAPILANDIRILMIŞ DERS CONTEXT JSON</h3>
+        <h3 class="text-sm font-bold text-white mb-3">📦 YAPAY ZEKÂ ASİSTANINA İLETİLEN YAPILANDIRILMIŞ DERS BAĞLAMI</h3>
         <pre class="bg-slate-950 p-4 rounded-xl text-[11px] text-emerald-400 font-mono overflow-x-auto border border-slate-800 max-h-80">${JSON.stringify(subjects, null, 2)}</pre>
     </div>
     `;
@@ -4313,7 +4313,7 @@ function updateTimerDisplay() {
 // 11. AI COACH ASSISTANT
 // ----------------------------------------------------
 async function renderAICoachView() {
-    document.getElementById('pageTitle').textContent = "AI Koç Asistanı & Analiz Motoru";
+    document.getElementById('pageTitle').textContent = "🤖 Yapay Zekâ Koç Asistanı & Akademik Analiz Motoru";
     const container = document.getElementById('viewContainer');
     const token = localStorage.getItem('yks_token');
     
@@ -4341,17 +4341,20 @@ async function renderAICoachView() {
 
         let html = getCoachStudentSwitcherHtml();
 
-        // 2. Dev Mode AI CONTEXT DEBUG Panel
+        const confText = (ai.confidence === 'HIGH') ? 'Yüksek' : ((ai.confidence === 'MEDIUM') ? 'Orta' : ((ai.confidence === 'LOW') ? 'Düşük' : 'Veri Yok'));
+        const confClass = (ai.confidence === 'HIGH') ? 'bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30' : ((ai.confidence === 'NO_DATA') ? 'bg-rose-500/20 text-rose-400 font-bold border border-rose-500/30' : 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30');
+
+        // 2. Yapay Zekâ Analiz Bağlamı Paneli
         html += `
         <div class="glass-card p-4 border border-[#7C6AE6]/40 bg-[#111A2C] mb-6 rounded-2xl">
             <div class="flex items-center justify-between gap-4 mb-3 border-b border-[#24314A] pb-2">
                 <div class="flex items-center gap-2">
-                    <span class="px-2 py-0.5 rounded bg-[#7C6AE6]/20 text-[#7C6AE6] text-[10px] font-black tracking-widest uppercase">AI CONTEXT DEBUG</span>
+                    <span class="px-2 py-0.5 rounded bg-[#7C6AE6]/20 text-[#7C6AE6] text-[10px] font-black tracking-widest uppercase">YAPAY ZEKÂ ANALİZ BAĞLAMI</span>
                     <span class="text-xs font-bold text-white">${ai.student_name} (ID: ${ai.student_id})</span>
                 </div>
                 <div class="flex items-center gap-2 text-[10px] font-mono">
-                    <span class="text-[#A8B3C7]">Confidence:</span>
-                    <span class="px-2 py-0.5 rounded ${ai.confidence === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400 font-bold' : ai.confidence === 'NO_DATA' ? 'bg-rose-500/20 text-rose-400 font-bold' : 'bg-amber-500/20 text-amber-400 font-bold'}">${ai.confidence}</span>
+                    <span class="text-[#A8B3C7]">Güvenilirlik:</span>
+                    <span class="px-2 py-0.5 rounded ${confClass}">${confText}</span>
                     <span class="text-[#A8B3C7] ml-2">Analiz Veri Kalitesi:</span>
                     <span class="text-white font-bold">%${dbg.dataQualityScore || ai.analysisDataQuality || 0}</span>
                 </div>
@@ -4378,7 +4381,7 @@ async function renderAICoachView() {
                     </div>
                     <div>
                         <h3 class="text-base font-bold text-white flex items-center gap-2">
-                            AI Akademik Analiz Raporu 
+                            Yapay Zekâ Akademik Analiz Raporu 
                             <span class="text-xs font-medium text-[#A8B3C7]">(${ai.student_name})</span>
                         </h3>
                         <span class="text-xs text-[#A8B3C7]">Öğrenciye özel veritabanı deneme ve konu performansına dayanır</span>
@@ -4418,12 +4421,15 @@ async function renderAICoachView() {
                         <i data-lucide="alert-triangle" class="w-4 h-4"></i> ⚠️ Geliştirilmesi Gerekenler & Konu Riskleri
                     </h4>
                     <ul class="text-xs text-slate-300 space-y-2">
-                        ${(ai.weaknesses || []).map(w => `
+                        ${(ai.weaknesses || []).map(w => {
+                            let cleanW = String(w).replace(/mastery skoru/gi, 'hâkimiyet puanı').replace(/mastery/gi, 'hâkimiyet');
+                            return `
                             <li class="flex items-start gap-2 bg-[#111A2C] p-2.5 rounded-lg border border-[#24314A]">
                                 <span class="text-rose-400">•</span>
-                                <span>${w}</span>
+                                <span>${cleanW}</span>
                             </li>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </ul>
                 </div>
             </div>
@@ -4434,15 +4440,22 @@ async function renderAICoachView() {
                     <i data-lucide="target" class="w-4 h-4"></i> 💡 Koç Akademik Aksiyon Önerileri
                 </h4>
                 <div class="space-y-3">
-                    ${(ai.structured_recommendations || []).map(r => `
+                    ${(ai.structured_recommendations || []).map(r => {
+                        let cleanProblem = String(r.problem || 'Akademik Aksiyon').replace(/Düşük Mastery/gi, 'Düşük Hâkimiyet').replace(/Mastery/gi, 'Hâkimiyet');
+                        let cleanEvidence = String(r.evidence || '').replace(/Mastery Skoru/gi, 'Hâkimiyet Puanı').replace(/Mastery/gi, 'Hâkimiyet').replace(/Evidence/gi, 'Kanıt');
+                        let prio = String(r.priority || 'NORMAL').toUpperCase();
+                        let prioLabel = (prio === 'HIGH' || prio === 'CRITICAL' || prio === 'YUKSEK') ? 'Yüksek' : ((prio === 'MEDIUM' || prio === 'ORTA') ? 'Orta' : ((prio === 'LOW' || prio === 'DUSUK') ? 'Düşük' : 'Normal'));
+                        let prioBadge = (prio === 'HIGH' || prio === 'CRITICAL' || prio === 'YUKSEK') ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : ((prio === 'MEDIUM' || prio === 'ORTA') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30');
+
+                        return `
                         <div class="bg-[#111A2C] p-3.5 rounded-xl border border-[#24314A] flex items-center justify-between gap-4">
                             <div>
                                 <div class="flex items-center gap-2 mb-1">
-                                    <span class="text-xs font-bold text-white">${r.problem || 'Akademik Aksiyon'}</span>
-                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${r.priority === 'HIGH' ? 'bg-rose-500/20 text-rose-400' : 'bg-indigo-500/20 text-indigo-400'}">${r.priority || 'NORMAL'}</span>
+                                    <span class="text-xs font-bold text-white">${cleanProblem}</span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${prioBadge}">${prioLabel}</span>
                                 </div>
                                 <p class="text-xs text-slate-300">${r.action || r}</p>
-                                ${r.evidence ? `<span class="text-[10px] text-[#A8B3C7] mt-1 block">📌 Kanıt: ${r.evidence}</span>` : ''}
+                                ${cleanEvidence ? `<span class="text-[10px] text-[#A8B3C7] mt-1 block">📌 Kanıt: ${cleanEvidence}</span>` : ''}
                             </div>
                             ${r.curriculum_topic_id ? `
                             <button onclick="quickAssignHomeworkForTopic(${r.curriculum_topic_id}, '${r.topic_name || ''}')" class="btn-primary-purple px-3 py-1.5 text-xs font-bold rounded-lg shrink-0 flex items-center gap-1.5 shadow">
@@ -4450,7 +4463,8 @@ async function renderAICoachView() {
                             </button>
                             ` : ''}
                         </div>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </div>
             </div>
         </div>
@@ -4467,8 +4481,8 @@ async function renderAICoachView() {
         ${getCoachStudentSwitcherHtml()}
         <div class="glass-card p-8 text-center border border-rose-800/50 rounded-2xl bg-[#111A2C] shadow-2xl my-4">
             <div class="w-12 h-12 rounded-xl bg-rose-900/60 text-rose-400 border border-rose-700 flex items-center justify-center mx-auto mb-3 text-xl font-bold">⚠️</div>
-            <h3 class="text-base font-bold text-rose-200 mb-2">AI Analiz Yükleme Hatası</h3>
-            <p class="text-xs text-slate-300 mb-4 max-w-md mx-auto">${escapeHtml(err.message || 'Seçilen öğrenci için AI analizi oluşturulamadı.')}</p>
+            <h3 class="text-base font-bold text-rose-200 mb-2">Yapay Zekâ Analiz Yükleme Hatası</h3>
+            <p class="text-xs text-slate-300 mb-4 max-w-md mx-auto">${escapeHtml(err.message || 'Seçilen öğrenci için analiz oluşturulamadı.')}</p>
             <button onclick="renderAICoachView()" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow transition inline-flex items-center gap-1.5">
                 🔄 Tekrar Dene
             </button>

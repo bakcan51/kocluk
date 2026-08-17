@@ -5751,7 +5751,7 @@ def build_student_analytics_context(cursor, student_id):
                 risk_label = '🟠 Riskli'
             else:
                 status = 'MASTERED'
-                risk_label = '🟢 Hakim'
+                risk_label = '🟢 Hâkim'
 
             t['mastery_score'] = mastery
             t['risk_label'] = risk_label
@@ -5958,10 +5958,10 @@ def ai_analyze_student():
                 "risk_label": r_label
             })
             if m_score < 50 or wr >= 3:
-                weaknesses.append(f"{t_name} ({s_name}) konusunda {wr} yanlış ve {m_score} mastery skoru ile kritik eksik tespit edildi.")
+                weaknesses.append(f"{t_name} ({s_name}) konusunda {wr} yanlış ve %{m_score} hâkimiyet puanı ile kritik eksik tespit edildi.")
                 recommendations.append({
-                    "problem": f"{t_name} Düşük Mastery",
-                    "evidence": f"Mastery Skoru: {m_score}/100, {wr} Yanlış",
+                    "problem": f"{t_name} Düşük Hâkimiyet",
+                    "evidence": f"Hâkimiyet Puanı: {m_score}/100, {wr} Yanlış",
                     "reason": "Konu bilgi eksikliği ve soru pratiği yetersizliği.",
                     "action": f"{t_name} konusunda 1 adet soru çözümlü ödev atanmalı.",
                     "priority": "HIGH",
