@@ -30,8 +30,8 @@
 <body class="bg-[#080D1A] text-[#F3F6FC] font-sans antialiased selection:bg-[#6F63D9] selection:text-white min-h-screen">
 
     <!-- LOGIN SCREEN (SINGLE UNIFIED LOGIN - NO ROLE SELECTOR) -->
-    <div id="loginScreen" class="fixed inset-0 z-50 flex items-center justify-center bg-[#080D1A]/95 backdrop-blur-2xl p-4">
-        <div class="w-full max-w-md bg-[#111A2C] border border-[#24314A] rounded-3xl p-8 shadow-2xl">
+    <div id="loginScreen" class="fixed inset-0 z-50 flex items-center justify-center bg-[#080D1A]/95 backdrop-blur-2xl p-4 overflow-y-auto py-8">
+        <div class="w-full max-w-md bg-[#111A2C] border border-[#24314A] rounded-3xl p-6 sm:p-8 shadow-2xl my-auto">
             <div class="flex flex-col items-center text-center mb-8">
                 <div class="w-16 h-16 rounded-2xl bg-[#2563EB] flex items-center justify-center shadow-lg mb-4">
                     <i data-lucide="graduation-cap" class="w-9 h-9 text-white"></i>
@@ -200,7 +200,7 @@
                         </button>
 
                         <!-- DROPDOWN PANEL -->
-                        <div id="notifDropdownPanel" class="hidden absolute right-0 mt-2 w-80 sm:w-96 glass-card border border-[#24314A] bg-[#111A2C] rounded-2xl shadow-2xl z-50 overflow-hidden">
+                        <div id="notifDropdownPanel" class="hidden absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-xs sm:w-96 glass-card border border-[#24314A] bg-[#111A2C] rounded-2xl shadow-2xl z-50 overflow-hidden">
                             <div class="p-3 border-b border-[#24314A] flex items-center justify-between bg-[#0B1324]">
                                 <h4 class="text-xs font-bold text-white flex items-center gap-2">
                                     <i data-lucide="bell" class="w-4 h-4 text-amber-400"></i> Bildirimler
@@ -219,14 +219,14 @@
                     </div>
 
                     <!-- Prominent Logout Button -->
-                    <button onclick="logout()" class="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow transition">
-                        <i data-lucide="log-out" class="w-4 h-4"></i> 🚪 Çıkış Yap
+                    <button onclick="logout()" class="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-2.5 sm:px-3.5 py-2 rounded-xl shadow transition shrink-0" title="Çıkış Yap">
+                        <i data-lucide="log-out" class="w-4 h-4"></i> <span class="hidden sm:inline">🚪 Çıkış</span>
                     </button>
                 </div>
             </header>
 
             <!-- DYNAMIC VIEWS -->
-            <div id="viewContainer" class="p-6 space-y-6 flex-1 overflow-y-auto">
+            <div id="viewContainer" class="p-3.5 sm:p-6 space-y-6 flex-1 overflow-y-auto pb-24 md:pb-6">
                 <!-- Views loaded dynamically via app.js -->
             </div>
         </main>
@@ -246,15 +246,15 @@
                 <i data-lucide="bar-chart-3" class="w-5 h-5 mb-0.5"></i> Deneme
             </button>
             <button onclick="logout()" class="flex flex-col items-center text-[10px] font-bold text-rose-400 hover:text-rose-300">
-                <i data-lucide="log-out" class="w-5 h-5 mb-0.5 text-rose-400"></i> Çıkış Yap
+                <i data-lucide="log-out" class="w-5 h-5 mb-0.5 text-rose-400"></i> Çıkış
             </button>
         </nav>
 
     </div>
 
     <!-- MODAL DIALOGS CONTAINER -->
-    <div id="modalContainer" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay">
-        <div id="modalContent" class="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative">
+    <div id="modalContainer" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 modal-overlay overflow-y-auto">
+        <div id="modalContent" class="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto my-auto">
             <!-- Modal Body injected dynamically -->
         </div>
     </div>

@@ -497,11 +497,12 @@ function logout() {
     showLoginScreen();
 }
 
-function toggleMobileSidebar() {
+function toggleMobileSidebar(forceState = null) {
     const sidebar = document.getElementById('mainSidebar');
     const overlay = document.getElementById('mobileSidebarOverlay');
     if (!sidebar) return;
-    if (sidebar.classList.contains('hidden')) {
+    const shouldOpen = forceState !== null ? forceState : sidebar.classList.contains('hidden');
+    if (shouldOpen) {
         sidebar.classList.remove('hidden');
         sidebar.classList.add('fixed', 'inset-y-0', 'left-0', 'z-50', 'bg-slate-950', 'w-72', 'shadow-2xl', 'p-4');
         if (overlay) overlay.classList.remove('hidden');
@@ -622,9 +623,9 @@ function getCoachStudentSwitcherHtml() {
     if (!currentUser || currentUser.role === 'STUDENT' || coachStudentsList.length === 0) return '';
 
     return `
-    <div class="glass-card p-4 border border-[#24314A] mb-6 bg-[#111A2C] flex items-center justify-between gap-4">
+    <div class="glass-card p-4 border border-[#24314A] mb-6 bg-[#111A2C] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div class="flex items-center gap-3">
-            <div class="p-2 bg-[#172238] rounded-xl text-[#4F8CFF] border border-[#2A3954]">
+            <div class="p-2 bg-[#172238] rounded-xl text-[#4F8CFF] border border-[#2A3954] shrink-0">
                 <i data-lucide="user-check" class="w-5 h-5"></i>
             </div>
             <div>
@@ -633,9 +634,9 @@ function getCoachStudentSwitcherHtml() {
             </div>
         </div>
         
-        <div class="flex items-center gap-3">
-            <label class="text-xs font-bold text-white hidden sm:inline">Öğrenci Seçin:</label>
-            <select onchange="changeActiveStudent(this.value)" class="bg-[#0B1324] border border-[#2A3954] rounded-xl px-4 py-2 text-xs font-bold text-white focus:outline-none focus:border-[#4F8CFF]">
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+            <label class="text-xs font-bold text-white hidden md:inline shrink-0">Öğrenci Seçin:</label>
+            <select onchange="changeActiveStudent(this.value)" class="w-full sm:w-auto bg-[#0B1324] border border-[#2A3954] rounded-xl px-4 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-[#4F8CFF]">
                 ${coachStudentsList.map(s => `<option value="${s.id}" ${s.id == selectedStudentId ? 'selected' : ''}>👨‍🎓 ${s.name} (${s.track}) - ${s.target_university || 'Hedefli'}</option>`).join('')}
             </select>
         </div>
@@ -697,6 +698,10 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
 
     if (updateHash) {
         syncUrlHash(viewName, paramId || (viewName === 'student-detail' ? selectedStudentId : null));
+    }
+
+    if (window.innerWidth < 768) {
+        toggleMobileSidebar(false);
     }
     
     document.querySelectorAll('.nav-item').forEach(btn => {
@@ -813,7 +818,7 @@ function openModal(titleOrHtml, maybeBodyHtml) {
     let cleanedHtml = finalHtml.replace(/<button[^>]*onclick=["']closeModal\(\)["'][^>]*>\s*[✕xX]?\s*<\/button>/gi, '');
 
     content.innerHTML = cleanedHtml + `
-    <button onclick="closeModal()" aria-label="Kapat" class="absolute top-4 right-4 text-slate-400 hover:text-white transition p-1.5 rounded-lg hover:bg-slate-800/80 font-black text-base leading-none z-50">
+    <button onclick="closeModal()" aria-label="Kapat" class="absolute top-3 right-3 text-slate-400 hover:text-white transition w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-800/80 font-black text-lg leading-none z-50">
         ✕
     </button>`;
     container.classList.remove('hidden');
@@ -1737,7 +1742,7 @@ async function renderStudentDetailView(studentId, planId = null) {
                 </select>
             </div>
 
-            <div class="flex items-center gap-3">
+            <div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-start sm:justify-end">
                 <button onclick="prepareNewBlankWeekGrid()" class="bg-indigo-900/60 hover:bg-indigo-800 border border-indigo-700 text-indigo-200 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
                     ➕ Gelecek Hafta Programı
                 </button>
@@ -1798,9 +1803,9 @@ async function renderStudentDetailView(studentId, planId = null) {
                 </table>
             </div>
 
-            <div class="mt-4 flex justify-between items-center text-xs text-slate-400">
+            <div class="mt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-xs text-slate-400">
                 <span>💡 Hücreler arasında <b>Tab</b> tuşu ile ilerleyebilirsiniz. Her hafta için ayrı kaydedilir.</span>
-                <button onclick="saveExcelStyleGrid(${student.id})" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2.5 rounded-xl shadow transition">
+                <button onclick="saveExcelStyleGrid(${student.id})" class="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2.5 rounded-xl shadow transition">
                     💾 Programı Kaydet & Öğrenciye Ata
                 </button>
             </div>
@@ -2031,7 +2036,7 @@ async function renderDenemeView() {
                 </div>
             </div>
 
-            <div class="flex items-center gap-2.5">
+            <div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
                 ${attempts.length >= 2 ? `
                 <button onclick="openDenemeCompareModal()" class="btn-secondary-slate px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5">
                     <i data-lucide="scale" class="w-4 h-4 text-[#4F8CFF]"></i> ⚖️ Deneme Karşılaştır
@@ -3099,7 +3104,7 @@ async function renderReportsView() {
                 </button>
             </div>
 
-            <div class="flex items-center gap-2 border-t lg:border-t-0 border-slate-800 pt-2 lg:pt-0">
+            <div class="flex flex-wrap items-center gap-2 border-t lg:border-t-0 border-slate-800 pt-2 lg:pt-0">
                 <input type="date" id="customStartDate" value="${currentReportsCustomStart}" class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none">
                 <span class="text-slate-500 text-xs">-</span>
                 <input type="date" id="customEndDate" value="${currentReportsCustomEnd}" class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none">
@@ -3187,7 +3192,7 @@ function renderReportsOverviewTabHtml(data) {
     const contradictions = insights.contradictions || [];
 
     let html = `
-    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3.5 mb-6">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
         <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 rounded-2xl flex flex-col justify-between">
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">İLK NET</span>
             <span class="text-2xl font-black text-slate-300 mt-1">${s.first_net ? s.first_net.toFixed(2) : '0.00'}</span>
@@ -3329,7 +3334,7 @@ function renderReportsSubjectsTabHtml(data) {
         `;
     } else {
         html += `
-        <div class="grid grid-cols-2 sm:grid-cols-6 gap-3 mb-6">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">İLK NET</span>
                 <span class="text-xl font-black text-slate-300 mt-1">${activeSubject.first_net.toFixed(2)}</span>
@@ -4347,7 +4352,7 @@ async function renderAICoachView() {
         // 2. Yapay Zekâ Analiz Bağlamı Paneli
         html += `
         <div class="glass-card p-4 border border-[#7C6AE6]/40 bg-[#111A2C] mb-6 rounded-2xl">
-            <div class="flex items-center justify-between gap-4 mb-3 border-b border-[#24314A] pb-2">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 mb-3 border-b border-[#24314A] pb-2">
                 <div class="flex items-center gap-2">
                     <span class="px-2 py-0.5 rounded bg-[#7C6AE6]/20 text-[#7C6AE6] text-[10px] font-black tracking-widest uppercase">YAPAY ZEKÂ ANALİZ BAĞLAMI</span>
                     <span class="text-xs font-bold text-white">${ai.student_name} (ID: ${ai.student_id})</span>
@@ -4374,9 +4379,9 @@ async function renderAICoachView() {
         // 3. Grounded Analysis Overview Card
         html += `
         <div class="glass-card p-6 border border-[#24314A] bg-[#111A2C] mb-6 rounded-2xl shadow-lg">
-            <div class="flex items-center justify-between mb-4 border-b border-[#24314A] pb-3">
+            <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 mb-4 border-b border-[#24314A] pb-3">
                 <div class="flex items-center gap-3">
-                    <div class="p-2.5 bg-[#7C6AE6]/15 rounded-xl text-[#7C6AE6] border border-[#7C6AE6]/30">
+                    <div class="p-2.5 bg-[#7C6AE6]/15 rounded-xl text-[#7C6AE6] border border-[#7C6AE6]/30 shrink-0">
                         <i data-lucide="sparkles" class="w-6 h-6"></i>
                     </div>
                     <div>
@@ -4387,7 +4392,7 @@ async function renderAICoachView() {
                         <span class="text-xs text-[#A8B3C7]">Öğrenciye özel veritabanı deneme ve konu performansına dayanır</span>
                     </div>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-xs px-3 py-1 rounded-full ${ai.valid_exam_count > 0 ? 'bg-[#4F8CFF]/15 text-[#4F8CFF] border border-[#4F8CFF]/30 font-bold' : 'bg-rose-500/15 text-rose-400 border border-rose-500/30 font-bold'}">
                         ${ai.valid_exam_count} Geçerli Deneme Sınavı
                     </span>
@@ -4448,8 +4453,8 @@ async function renderAICoachView() {
                         let prioBadge = (prio === 'HIGH' || prio === 'CRITICAL' || prio === 'YUKSEK') ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : ((prio === 'MEDIUM' || prio === 'ORTA') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30');
 
                         return `
-                        <div class="bg-[#111A2C] p-3.5 rounded-xl border border-[#24314A] flex items-center justify-between gap-4">
-                            <div>
+                        <div class="bg-[#111A2C] p-3.5 rounded-xl border border-[#24314A] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                            <div class="flex-1">
                                 <div class="flex items-center gap-2 mb-1">
                                     <span class="text-xs font-bold text-white">${cleanProblem}</span>
                                     <span class="px-2 py-0.5 rounded text-[10px] font-bold ${prioBadge}">${prioLabel}</span>
@@ -4458,7 +4463,7 @@ async function renderAICoachView() {
                                 ${cleanEvidence ? `<span class="text-[10px] text-[#A8B3C7] mt-1 block">📌 Kanıt: ${cleanEvidence}</span>` : ''}
                             </div>
                             ${r.curriculum_topic_id ? `
-                            <button onclick="quickAssignHomeworkForTopic(${r.curriculum_topic_id}, '${r.topic_name || ''}')" class="btn-primary-purple px-3 py-1.5 text-xs font-bold rounded-lg shrink-0 flex items-center gap-1.5 shadow">
+                            <button onclick="quickAssignHomeworkForTopic(${r.curriculum_topic_id}, '${r.topic_name || ''}')" class="btn-primary-purple px-3.5 py-2 text-xs font-bold rounded-lg shrink-0 flex items-center gap-1.5 shadow w-full sm:w-auto justify-center">
                                 <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> Ödev Ata
                             </button>
                             ` : ''}
@@ -4773,7 +4778,7 @@ async function renderAdminGeneralPoolTab(token) {
     </div>
 
     <!-- BULK ACTIONS BAR -->
-    <div class="glass-card p-3 border border-[#24314A] bg-[#141E33] rounded-2xl mb-4 flex items-center justify-between gap-4">
+    <div class="glass-card p-3 border border-[#24314A] bg-[#141E33] rounded-2xl mb-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div class="flex items-center gap-3">
             <label class="flex items-center gap-2 cursor-pointer text-xs text-white font-bold">
                 <input type="checkbox" onchange="toggleBulkSelectAll(this.checked)" class="w-4 h-4 rounded text-indigo-600">
@@ -4782,7 +4787,7 @@ async function renderAdminGeneralPoolTab(token) {
             <span id="bulkSelectedCountLabel" class="text-xs text-[#4F8CFF] font-mono font-bold">Seçili: ${selectedBulkResourceIds.size}</span>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
             <button onclick="executeAdminBulkAction('ACTIVATE')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 shadow">
                 🟢 Toplu Aktifleştir
             </button>
@@ -5607,22 +5612,22 @@ function renderResourceCardHtml(r) {
         </div>
 
         <!-- ACTIONS ROW -->
-        <div class="flex items-center gap-2 pt-2 border-t border-[#24314A]">
+        <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-[#24314A]">
             ${currentUser && currentUser.role !== 'STUDENT' ? `
-            <button onclick="openAssignResourceModal(${r.id})" class="bg-[#4F8CFF] hover:bg-[#3b72df] text-white px-3 py-2 text-xs font-bold rounded-xl flex-1 flex items-center justify-center gap-1.5 shadow transition">
+            <button onclick="openAssignResourceModal(${r.id})" class="bg-[#4F8CFF] hover:bg-[#3b72df] text-white px-3 py-2 text-xs font-bold rounded-xl flex-1 flex items-center justify-center gap-1.5 shadow transition min-w-[120px]">
                 <i data-lucide="user-plus" class="w-3.5 h-3.5"></i> Öğrenciye Ata
             </button>
             ` : ''}
 
             ${isOwner ? `
-            <button onclick="openCreateResourceModal(${r.id})" class="bg-[#172238] hover:bg-[#24314A] px-2.5 py-2 rounded-xl text-slate-300 hover:text-white border border-[#2A3954] transition flex items-center gap-1 text-xs font-bold" title="Düzenle">
+            <button onclick="openCreateResourceModal(${r.id})" class="bg-[#172238] hover:bg-[#24314A] px-3 py-2 rounded-xl text-slate-300 hover:text-white border border-[#2A3954] transition flex items-center gap-1 text-xs font-bold" title="Düzenle">
                 <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Düzenle
             </button>
-            <button onclick="deleteOrArchiveResource(${r.id})" class="bg-rose-500/10 hover:bg-rose-600 hover:text-white px-2.5 py-2 rounded-xl text-rose-400 border border-rose-500/30 transition flex items-center gap-1 text-xs font-bold" title="Sil">
+            <button onclick="deleteOrArchiveResource(${r.id})" class="bg-rose-500/10 hover:bg-rose-600 hover:text-white px-3 py-2 rounded-xl text-rose-400 border border-rose-500/30 transition flex items-center gap-1 text-xs font-bold ml-auto" title="Sil">
                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Sil
             </button>
             ` : (currentUser && (currentUser.role === 'COACH' || currentUser.role === 'ADMIN') ? `
-            <button onclick="deleteOrArchiveResource(${r.id})" class="bg-rose-500/10 hover:bg-rose-600 hover:text-white px-2.5 py-2 rounded-xl text-rose-400 border border-rose-500/30 transition flex items-center gap-1 text-xs font-bold" title="Sil">
+            <button onclick="deleteOrArchiveResource(${r.id})" class="bg-rose-500/10 hover:bg-rose-600 hover:text-white px-3 py-2 rounded-xl text-rose-400 border border-rose-500/30 transition flex items-center gap-1 text-xs font-bold ml-auto" title="Sil">
                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Sil
             </button>
             ` : '')}
@@ -5711,16 +5716,8 @@ async function openCreateResourceModal(resourceId = null) {
             if (found) r = found;
         }
 
-        const html = `
-        <div class="p-6 max-w-lg mx-auto bg-[#111A2C] border border-[#24314A] rounded-2xl shadow-2xl">
-            <div class="flex items-center justify-between pb-3 border-b border-[#24314A] mb-4">
-                <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                    <i data-lucide="book-open" class="w-5 h-5 text-[#4F8CFF]"></i>
-                    ${resourceId ? 'Kaynağı Düzenle' : '+ Yeni Kaynak Ekle'}
-                </h3>
-                <button onclick="closeModal()" class="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
-            </div>
-
+        const modalTitle = resourceId ? 'Kaynağı Düzenle' : '+ Yeni Kaynak Ekle';
+        const modalBody = `
             <form onsubmit="submitCreateResource(event, ${resourceId})" class="space-y-4 text-xs">
                 <div>
                     <label class="block font-bold text-[#A8B3C7] mb-1">Kaynak Adı *</label>
@@ -5732,7 +5729,7 @@ async function openCreateResourceModal(resourceId = null) {
                     <input type="text" id="res_publisher" value="${r.publisher || ''}" placeholder="Örn: 345 Yayınları" class="w-full bg-[#0B1324] border border-[#2A3954] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#4F8CFF]">
                 </div>
 
-                <div class="grid grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                         <label class="block font-bold text-[#A8B3C7] mb-1">Sınav Sistemi *</label>
                         <select id="res_exam_system" onchange="handleExamSystemChange()" class="w-full bg-[#0B1324] border border-[#2A3954] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#4F8CFF]">
@@ -5755,7 +5752,7 @@ async function openCreateResourceModal(resourceId = null) {
                     <select id="res_subject_id" required class="w-full bg-[#0B1324] border border-[#2A3954] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#4F8CFF]"></select>
                 </div>
 
-                <div class="grid grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                         <label class="block font-bold text-[#A8B3C7] mb-1">Kaynak Türü</label>
                         <select id="res_resource_type" class="w-full bg-[#0B1324] border border-[#2A3954] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#4F8CFF]">
@@ -5794,9 +5791,8 @@ async function openCreateResourceModal(resourceId = null) {
                     </button>
                 </div>
             </form>
-        </div>
         `;
-        openModal(html);
+        openModal(modalTitle, modalBody);
         if (window.lucide) lucide.createIcons();
         initResourceFormDropdowns(r);
     } catch (err) {
@@ -8663,14 +8659,14 @@ async function renderStudentsRiskListView(filter = 'ALL') {
                         </div>
                     </div>
 
-                    <div class="pt-4 border-t border-[var(--border)] flex items-center justify-between gap-2">
-                        <button onclick="handleStudentDetailClick(${st.id}, '${safeName}')" class="flex-1 btn-primary text-white font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm">
+                    <div class="pt-4 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-2">
+                        <button onclick="handleStudentDetailClick(${st.id}, '${safeName}')" class="flex-1 min-w-[90px] btn-primary text-white font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm">
                             <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detay Gör
                         </button>
-                        <button onclick="navigateView('program', ${st.id})" class="btn-secondary font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5">
+                        <button onclick="navigateView('program', ${st.id})" class="flex-1 min-w-[80px] btn-secondary font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5">
                             <i data-lucide="calendar" class="w-3.5 h-3.5"></i> Program
                         </button>
-                        <button onclick="navigateView('messages', ${st.user_id})" class="btn-secondary font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5">
+                        <button onclick="navigateView('messages', ${st.user_id})" class="flex-1 min-w-[75px] btn-secondary font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5">
                             <i data-lucide="message-square" class="w-3.5 h-3.5"></i> Mesaj
                         </button>
                     </div>
@@ -9222,7 +9218,7 @@ async function openSimpleCellModal(studentId, progDate, dayName, startTime, endT
                 </div>
             </div>
 
-            <div class="flex items-center justify-end gap-3 pt-2">
+            <div class="flex flex-wrap items-center justify-end gap-2.5 pt-2">
                 <button onclick="closeModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold hover:bg-slate-700">Kapat</button>
                 <button onclick="toggleStudentTaskCompletion(${item.id}, ${!isCompleted})" class="px-5 py-2 rounded-xl font-black text-white shadow-lg transition flex items-center gap-2 ${isCompleted ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'}">
                     ${isCompleted ? '↩️ Bekliyor Olarak İşaretle' : '✓ Tamamlandı Olarak İşaretle'}
@@ -10319,7 +10315,7 @@ async function renderMufredatView(targetStudentId = null) {
                     </div>
                 </div>
 
-                <div class="flex items-center gap-3">
+                <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-start md:justify-end">
                     ${studentExamSys === 'LGS' ? `
                     <span class="text-xs font-bold text-purple-300 bg-purple-950 border border-purple-800 px-3.5 py-1.5 rounded-xl shadow">LGS MEB 2026 Müfredatı</span>
                     ` : `
@@ -10414,7 +10410,7 @@ async function renderMufredatView(targetStudentId = null) {
                             <h4 class="font-black text-sm text-[#172033]">${top.topic_name}</h4>
                         </div>
 
-                        <div class="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+                        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
                             ${topicStatusBadge}
 
                             <!-- DECOUPLED TOPIC COMPLETION BUTTON -->
@@ -10469,7 +10465,7 @@ async function renderMufredatView(targetStudentId = null) {
 
                                 <!-- UNASSIGN / REMOVE RESOURCE BUTTON -->
                                 ${currentUser && ['COACH', 'ADMIN'].includes(currentUser.role) ? `
-                                <button onclick="unassignMufredatTopicResource(${r.topic_resource_id}, ${mufredatActiveStudentId})" title="Atamayı Kaldır" class="bg-white hover:bg-[#FEF2F2] text-[#64748B] hover:text-[#DC2626] p-1 rounded-lg border border-[#CBD5E1] transition">
+                                <button onclick="unassignMufredatTopicResource(${r.topic_resource_id}, ${mufredatActiveStudentId})" title="Atamayı Kaldır" class="bg-white hover:bg-[#FEF2F2] text-[#64748B] hover:text-[#DC2626] p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border border-[#CBD5E1] transition">
                                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                                 </button>
                                 ` : ''}
@@ -10934,20 +10930,20 @@ async function renderStudentAssignmentsView() {
             </div>
 
             <!-- Search, Student Filter & Actions -->
-            <div class="flex items-center gap-3">
+            <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
                 ${currentUser.role !== 'STUDENT' ? `
-                <select onchange="handleAssignmentStudentSelect(event)" class="bg-white dark:bg-slate-900 border border-[#CBD5E1] dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-[#0F172A] dark:text-white focus:outline-none focus:border-[#2563EB] font-semibold shadow-sm">
+                <select onchange="handleAssignmentStudentSelect(event)" class="bg-white dark:bg-slate-900 border border-[#CBD5E1] dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-[#0F172A] dark:text-white focus:outline-none focus:border-[#2563EB] font-semibold shadow-sm w-full sm:w-auto">
                     <option value="ALL" ${!selectedStudentId || selectedStudentId === 'ALL' ? 'selected' : ''}>👥 Tüm Öğrencilerim</option>
                     ${coachStudents.map(s => `<option value="${s.id}" ${selectedStudentId == s.id ? 'selected' : ''}>👤 ${s.name} ${s.surname || ''}</option>`).join('')}
                 </select>
                 ` : ''}
 
-                <div class="relative flex-1 md:w-56">
+                <div class="relative flex-1 min-w-[160px] md:w-56">
                     <input type="text" value="${currentAssignmentsSearch}" onkeyup="handleAssignmentsSearch(event)" placeholder="🔍 Ödev veya ders ara..." class="w-full bg-white dark:bg-slate-900 border border-[#CBD5E1] dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-[#0F172A] dark:text-white focus:outline-none focus:border-[#2563EB] placeholder-[#94A3B8] shadow-sm">
                 </div>
 
                 ${currentUser.role !== 'STUDENT' ? `
-                <button onclick="openCreateAssignmentModal()" class="bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow flex items-center gap-1.5 whitespace-nowrap">
+                <button onclick="openCreateAssignmentModal()" class="w-full sm:w-auto justify-center bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="plus-circle" class="w-4 h-4"></i> + Ödev Ver
                 </button>
                 ` : ''}
