@@ -79,9 +79,9 @@ function formatEnumLabel(enumVal) {
 
 // YKS KOÇLUK PLATFORMU - MASTER FRONTEND APPLICATION LOGIC
 
-const API_BASE = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') && window.location.port === '5005'
-    ? "/api"
-    : "http://127.0.0.1:5005/api";
+const API_BASE = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') && window.location.port !== '5005' && window.location.port !== ''
+    ? "http://127.0.0.1:5005/api"
+    : "/api";
 
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';

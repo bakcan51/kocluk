@@ -8,8 +8,14 @@ import werkzeug.utils
 from flask import Flask, request, jsonify, send_file, make_response, send_from_directory, g
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(os.path.dirname(BASE_DIR), 'uploads')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    UPLOAD_FOLDER = "/tmp/uploads"
+else:
+    UPLOAD_FOLDER = os.path.join(os.path.dirname(BASE_DIR), 'uploads')
+try:
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+except Exception:
+    pass
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'doc', 'docx', 'xls', 'xlsx', 'txt'}
 
 def allowed_file(filename):

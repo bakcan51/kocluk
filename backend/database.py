@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import shutil
 import json
 from datetime import datetime, date, timedelta
 import werkzeug.security
@@ -10,7 +11,29 @@ except ImportError:
     has_app_context = lambda: False
     g = None
 
-DB_PATH = "/Users/burakakcan/.gemini/antigravity/scratch/yks_platform/yks_platform.db"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_DB_PATH = os.path.join(BASE_DIR, "yks_platform.db")
+
+# On serverless platforms (e.g. Vercel, AWS Lambda), the deployment folder is read-only.
+# We copy the pre-seeded SQLite database to /tmp so writes succeed.
+if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    TMP_DB_PATH = "/tmp/yks_platform.db"
+    if not os.path.exists(TMP_DB_PATH):
+        if os.path.exists(DEFAULT_DB_PATH):
+            try:
+                shutil.copy2(DEFAULT_DB_PATH, TMP_DB_PATH)
+            except Exception:
+                pass
+        else:
+            backend_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yks_platform.db")
+            if os.path.exists(backend_db):
+                try:
+                    shutil.copy2(backend_db, TMP_DB_PATH)
+                except Exception:
+                    pass
+    DB_PATH = TMP_DB_PATH
+else:
+    DB_PATH = os.environ.get("DATABASE_PATH", DEFAULT_DB_PATH)
 
 def get_db():
     if has_app_context() and g is not None:
