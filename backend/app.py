@@ -579,12 +579,11 @@ def handle_students():
     if request.method == 'GET':
         if user['role'] == 'COACH':
             cursor.execute("""
-            SELECT s.*, u.name, u.surname, u.username, u.email, u.status as user_status, u.last_login_at
+            SELECT DISTINCT s.*, u.name, u.surname, u.username, u.email, u.status as user_status, u.last_login_at
             FROM students s 
             JOIN users u ON s.user_id = u.id
             LEFT JOIN coach_students cs ON s.id = cs.student_id
             WHERE cs.coach_id = ? OR s.created_by_coach_id = ? OR s.coach_id = ?
-            GROUP BY s.id
             ORDER BY s.id ASC;
             """, (user.get('coach_id', 0), user.get('coach_id', 0), user.get('coach_id', 0)))
         else:
@@ -1555,7 +1554,7 @@ def get_student_dashboard():
     FROM mock_exam_results mr
     JOIN mock_exams me ON mr.mock_exam_id = me.id
     WHERE mr.student_id = ?
-    GROUP BY mr.mock_exam_id
+    GROUP BY mr.mock_exam_id, me.title, me.exam_type, mr.exam_date
     ORDER BY mr.exam_date DESC
     LIMIT 5;
     """, (student['id'],))
@@ -2405,7 +2404,7 @@ def handle_mock_topic_analysis():
         JOIN topics t ON te.topic_id = t.id
         JOIN subjects sub ON t.subject_id = sub.id
         WHERE mr.student_id = ?
-        GROUP BY te.topic_id
+        GROUP BY te.topic_id, t.name, sub.name
         ORDER BY total_incorrect DESC
         LIMIT 10;
         """, (student_id,))
@@ -2727,7 +2726,7 @@ def handle_assignments(path_assignment_id=None):
         pending_cnt = sum(1 for r in raw_assignments if r['status'] in ('PENDING', 'ASSIGNED'))
         in_prog_cnt = sum(1 for r in raw_assignments if r['status'] == 'IN_PROGRESS')
         completed_cnt = sum(1 for r in raw_assignments if r['status'] == 'COMPLETED')
-        overdue_cnt = sum(1 for r in raw_assignments if r['status'] == 'OVERDUE' or (r.get('due_date') and r['due_date'] < today_str and r['status'] != 'COMPLETED'))
+        overdue_cnt = sum(1 for r in raw_assignments if r['status'] == 'OVERDUE' or (r.get('due_date') and str(r['due_date']) < today_str and r['status'] != 'COMPLETED'))
         completion_rate = round((completed_cnt / total_cnt * 100), 1) if total_cnt > 0 else 0.0
 
         summary = {
@@ -5745,7 +5744,7 @@ def build_student_analytics_context(cursor, student_id):
         valid_ids = [a['id'] for a in valid_attempts]
         placeholders = ','.join('?' * len(valid_ids))
         cursor.execute(f"""
-        SELECT s.name as subject_name,
+        SELECT s.name as subject_name, tr.subject_id,
                AVG(tr.net) as avg_net,
                AVG(tr.correct) as avg_correct,
                AVG(tr.wrong) as avg_wrong,
@@ -7117,7 +7116,7 @@ def get_resource_analytics():
     JOIN resource_assignments ra ON ra.resource_id = r.id OR ra.resource_id IN (SELECT id FROM resources WHERE origin_resource_id = r.id)
     LEFT JOIN subjects s ON r.subject_id = s.id
     WHERE r.owner_type = 'SYSTEM' OR r.owner_id IS NULL
-    GROUP BY r.id
+    GROUP BY r.id, r.name, r.subject, r.grade, r.exam_type, r.publisher, r.difficulty
     ORDER BY assignment_count DESC
     LIMIT 10;
     """)
@@ -7145,7 +7144,7 @@ def get_resource_analytics():
     FROM subjects s
     LEFT JOIN resources r ON r.subject_id = s.id
     LEFT JOIN resource_assignments ra ON ra.resource_id = r.id
-    GROUP BY s.id
+    GROUP BY s.id, s.name
     ORDER BY assignment_count DESC;
     """)
     subject_usage = [dict(r) for r in cursor.fetchall()]

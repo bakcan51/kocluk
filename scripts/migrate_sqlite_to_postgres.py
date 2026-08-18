@@ -8,6 +8,7 @@ import sys
 import os
 import argparse
 import sqlite3
+import re
 
 # Add backend directory to sys.path
 backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'backend'))
@@ -21,9 +22,7 @@ except ImportError:
     print("Error: psycopg2 is required. Run 'pip install psycopg2-binary'")
     sys.exit(1)
 
-from database import init_db
-
-# Tables in dependency order
+# Strict topological table order (Parents before children)
 ORDERED_TABLES = [
     'users',
     'coaches',
@@ -78,6 +77,69 @@ ORDERED_TABLES = [
     'activity_logs'
 ]
 
+def split_top_level_sql(sql_body):
+    parts = []
+    current = []
+    paren_depth = 0
+    in_quote = False
+    quote_char = None
+    for ch in sql_body:
+        if ch in ("'", '"'):
+            if not in_quote:
+                in_quote = True
+                quote_char = ch
+            elif quote_char == ch:
+                in_quote = False
+                quote_char = None
+            current.append(ch)
+        elif ch == '(' and not in_quote:
+            paren_depth += 1
+            current.append(ch)
+        elif ch == ')' and not in_quote:
+            paren_depth -= 1
+            current.append(ch)
+        elif ch == ',' and paren_depth == 0 and not in_quote:
+            parts.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        parts.append(''.join(current).strip())
+    return parts
+
+def convert_sqlite_ddl_to_postgres(table_name, sqlite_sql):
+    first_paren = sqlite_sql.find('(')
+    last_paren = sqlite_sql.rfind(')')
+    if first_paren == -1 or last_paren == -1:
+        return sqlite_sql
+    
+    body = sqlite_sql[first_paren+1:last_paren]
+    definitions = split_top_level_sql(body)
+    
+    pg_definitions = []
+    for line in definitions:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        # Skip table-level foreign keys during table creation
+        if line_clean.upper().startswith('FOREIGN KEY'):
+            continue
+        
+        # Strip inline references
+        line_clean = re.sub(r'\s+REFERENCES\s+[a-zA-Z0-9_]+\s*\([^)]+\)(\s+ON\s+DELETE\s+[A-Z\s]+)?', '', line_clean, flags=re.IGNORECASE)
+        # Convert AUTOINCREMENT
+        line_clean = re.sub(r'INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT', 'SERIAL PRIMARY KEY', line_clean, flags=re.IGNORECASE)
+        # Convert BOOLEAN DEFAULT 0 / 1
+        line_clean = re.sub(r'BOOLEAN\s+DEFAULT\s+0', 'BOOLEAN DEFAULT FALSE', line_clean, flags=re.IGNORECASE)
+        line_clean = re.sub(r'BOOLEAN\s+DEFAULT\s+1', 'BOOLEAN DEFAULT TRUE', line_clean, flags=re.IGNORECASE)
+        # Convert DATETIME to TIMESTAMP
+        line_clean = re.sub(r'\bDATETIME\b', 'TIMESTAMP', line_clean, flags=re.IGNORECASE)
+        
+        pg_definitions.append(line_clean)
+        
+    joined_body = ',\n    '.join(pg_definitions)
+    return f'CREATE TABLE IF NOT EXISTS "{table_name}" (\n    {joined_body}\n);'
+
 def migrate(sqlite_path, postgres_url):
     print("==================================================")
     print("STARTING SQLITE -> POSTGRESQL MIGRATION")
@@ -97,94 +159,97 @@ def migrate(sqlite_path, postgres_url):
     sqlite_conn.row_factory = sqlite3.Row
     sqlite_cur = sqlite_conn.cursor()
 
-    # Get list of existing tables in SQLite
-    sqlite_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-    existing_sqlite_tables = set(row[0] for row in sqlite_cur.fetchall())
+    # Get list of existing tables and DDL in SQLite
+    sqlite_cur.execute("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+    sqlite_table_ddls = dict(sqlite_cur.fetchall())
+    existing_sqlite_tables = set(sqlite_table_ddls.keys())
 
     # 2. Connect to PostgreSQL
     try:
         pg_conn = psycopg2.connect(postgres_url)
-        pg_conn.autocommit = False
+        pg_conn.autocommit = True
         pg_cur = pg_conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         print("✓ Connected to PostgreSQL database successfully.")
     except Exception as e:
         print(f"Error connecting to PostgreSQL: {e}")
         sys.exit(1)
 
-    # 3. Initialize PostgreSQL Schema using database adapter
-    os.environ["DATABASE_URL"] = postgres_url
-    try:
-        init_db()
-        print("✓ PostgreSQL schema verified/initialized.")
-    except Exception as e:
-        print(f"Schema initialization notice/error: {e}")
-
-    # Re-connect/ensure connection is clean
-    pg_conn.commit()
-
-    # 4. Disable FK checks temporarily for safe bulk insertion
-    try:
-        pg_cur.execute("SET session_replication_role = 'replica';")
-    except Exception as e:
-        print(f"Notice setting replica role: {e}")
-
-    migration_report = {}
-    has_error = False
-
-    # Process all tables in ordered sequence
+    # 3. Create Tables in strict topological order
     tables_to_process = [t for t in ORDERED_TABLES if t in existing_sqlite_tables]
-    # Add any extra tables that exist in SQLite but not in ORDERED_TABLES
     for t in existing_sqlite_tables:
         if t not in tables_to_process:
             tables_to_process.append(t)
 
+    print("\n--- Creating/verifying PostgreSQL schemas ---")
+    for table in tables_to_process:
+        raw_sql = sqlite_table_ddls.get(table)
+        if raw_sql:
+            translated_ddl = convert_sqlite_ddl_to_postgres(table, raw_sql)
+            try:
+                pg_cur.execute(translated_ddl)
+                print(f"✓ Schema OK: {table}")
+            except Exception as e:
+                print(f"Notice on table '{table}' DDL: {e}")
+
+    # 4. Insert Data in strict topological order
+    print("\n--- Transferring data records in dependency order ---")
+    migration_report = {}
+    has_error = False
+
     for table in tables_to_process:
         try:
             # Count in SQLite
-            sqlite_cur.execute(f"SELECT COUNT(*) FROM {table}")
+            sqlite_cur.execute(f'SELECT COUNT(*) FROM "{table}"')
             sqlite_count = sqlite_cur.fetchone()[0]
 
             if sqlite_count == 0:
-                # Still check count in Postgres
-                pg_cur.execute(f"SELECT COUNT(*) FROM {table}")
+                pg_cur.execute(f'SELECT COUNT(*) FROM "{table}"')
                 pg_count = pg_cur.fetchone()[0]
                 migration_report[table] = (sqlite_count, pg_count, "OK (Empty)")
+                print(f"✓ {table}: 0 records (empty)")
                 continue
 
             # Fetch all rows from SQLite
-            sqlite_cur.execute(f"SELECT * FROM {table}")
+            sqlite_cur.execute(f'SELECT * FROM "{table}"')
             rows = sqlite_cur.fetchall()
-            if not rows:
-                migration_report[table] = (0, 0, "OK")
-                continue
 
             col_names = [col[0] for col in sqlite_cur.description]
             cols_joined = ", ".join([f'"{c}"' for c in col_names])
             placeholders = ", ".join(["%s"] * len(col_names))
 
-            # Build insert query with ON CONFLICT DO NOTHING to avoid duplicate errors
-            insert_query = f'INSERT INTO "{table}" ({cols_joined}) VALUES ({placeholders}) ON CONFLICT DO NOTHING;'
+            # Detect boolean columns in postgres table
+            pg_cur.execute(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '{table}';")
+            col_types = dict(pg_cur.fetchall())
 
-            # Convert sqlite3.Row to tuples
-            data_tuples = [tuple(row[c] for c in col_names) for row in rows]
+            data_tuples = []
+            for row in rows:
+                tup = []
+                for c in col_names:
+                    val = row[c]
+                    # Convert 0/1 to boolean if target column is boolean
+                    if col_types.get(c) == 'boolean' and isinstance(val, int):
+                        val = bool(val)
+                    tup.append(val)
+                data_tuples.append(tuple(tup))
+
+            # Build insert query with ON CONFLICT DO NOTHING to preserve exact state
+            insert_query = f'INSERT INTO "{table}" ({cols_joined}) VALUES ({placeholders}) ON CONFLICT DO NOTHING;'
 
             # Execute batch insert
             psycopg2.extras.execute_batch(pg_cur, insert_query, data_tuples, page_size=500)
-            pg_conn.commit()
 
             # Fix Postgres auto-increment sequence if 'id' column exists
             if 'id' in col_names:
                 try:
                     pg_cur.execute(f"""
                     SELECT setval(
-                        pg_get_serial_sequence('{table}', 'id'),
+                        pg_get_serial_sequence('"{table}"', 'id'),
                         COALESCE((SELECT MAX(id) FROM "{table}"), 1),
                         (SELECT MAX(id) FROM "{table}") IS NOT NULL
                     );
                     """)
-                    pg_conn.commit()
                 except Exception:
-                    pg_conn.rollback()
+                    pass
 
             # Verify count in PostgreSQL
             pg_cur.execute(f'SELECT COUNT(*) FROM "{table}"')
@@ -194,19 +259,12 @@ def migrate(sqlite_path, postgres_url):
             if pg_count != sqlite_count:
                 has_error = True
             migration_report[table] = (sqlite_count, pg_count, status)
+            print(f"✓ {table}: {pg_count}/{sqlite_count} records migrated -> {status}")
 
         except Exception as e:
-            pg_conn.rollback()
             print(f"Error migrating table '{table}': {e}")
             migration_report[table] = (sqlite_count if 'sqlite_count' in locals() else -1, -1, f"ERROR: {str(e)[:40]}")
             has_error = True
-
-    # 5. Re-enable FK checks
-    try:
-        pg_cur.execute("SET session_replication_role = 'DEFAULT';")
-        pg_conn.commit()
-    except Exception as e:
-        print(f"Notice resetting session_replication_role: {e}")
 
     # Close connections
     sqlite_conn.close()

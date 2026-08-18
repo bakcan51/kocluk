@@ -81,6 +81,13 @@ def translate_query_for_postgres(sql):
     # Translate AUTOINCREMENT to SERIAL PRIMARY KEY in DDL
     sql = re.sub(r'INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT', 'SERIAL PRIMARY KEY', sql, flags=re.IGNORECASE)
 
+    # Translate BOOLEAN to INTEGER for PostgreSQL DDL
+    sql = re.sub(r'\bBOOLEAN\b', 'INTEGER', sql, flags=re.IGNORECASE)
+
+    # Translate date/time helper functions
+    sql = re.sub(r'\bDATE\(\'now\'\)', 'CURRENT_DATE', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'\bDATETIME\(\'now\'\)', 'CURRENT_TIMESTAMP', sql, flags=re.IGNORECASE)
+
     # Translate parameter placeholders '?' to '%s' outside quotes
     parts = []
     in_quote = False
@@ -192,7 +199,14 @@ class PostgresConnectionWrapper:
         return self._conn.rollback()
 
     def close(self):
-        return self._conn.close()
+        if has_app_context() and g is not None:
+            if getattr(g, 'db', None) is self:
+                g.db = None
+        try:
+            if self._conn and not self._conn.closed:
+                return self._conn.close()
+        except Exception:
+            pass
 
     @property
     def total_changes(self):
@@ -208,14 +222,14 @@ def get_db():
             db = getattr(g, 'db', None)
             if db is not None:
                 try:
-                    if not db._conn.closed:
+                    if getattr(db, '_conn', None) is not None and not db._conn.closed:
                         return db
                 except Exception:
-                    db = None
-                    g.db = None
-            if db is None:
-                raw_conn = psycopg2.connect(db_url)
-                g.db = PostgresConnectionWrapper(raw_conn)
+                    pass
+                db = None
+                g.db = None
+            raw_conn = psycopg2.connect(db_url)
+            g.db = PostgresConnectionWrapper(raw_conn)
             return g.db
         else:
             raw_conn = psycopg2.connect(db_url)
