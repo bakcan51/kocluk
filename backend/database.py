@@ -367,6 +367,7 @@ def init_db():
         FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
         FOREIGN KEY (assigned_by) REFERENCES users(id)
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_student_rel_unique ON coach_student_relationships (student_id, coach_id);
     """)
 
     # 5. Coach Invitations (Secure tokens: /invite/TOKEN)

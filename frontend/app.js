@@ -6330,38 +6330,51 @@ async function renderStudentDashboard() {
             </div>
         </div>
 
-        <!-- MY ASSIGNED COACH (SINGLE COACH RULE #38) WIDGET -->
+        <!-- MY ASSIGNED COACH WIDGET -->
         <div class="glass-card p-6 border border-indigo-900/80 mb-6">
             <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
                 <div>
                     <h3 class="text-base font-bold text-white flex items-center gap-2">
-                        <i data-lucide="user-check" class="w-5 h-5 text-indigo-400"></i> 👨‍🏫 KOÇUM
+                        <i data-lucide="user-check" class="w-5 h-5 text-indigo-400"></i> 👨‍🏫 ATANMIŞ KOÇUM
                     </h3>
-                    <p class="text-xs text-slate-400 mt-0.5">Akademik takibinizi yapan ve ödevlerinizi veren yetkili koçunuz</p>
+                    <p class="text-xs text-slate-400 mt-0.5">Akademik takibinizi yapan ve çalışma planınızı yöneten yetkili koçunuz</p>
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                ${myCoaches.length === 0 ? `<div class="col-span-3 text-center p-6 text-slate-500">Henüz atanmış koçunuz bulunmamaktadır.</div>` : ''}
-                ${myCoaches.map(c => `
-                <div class="bg-slate-900/70 p-4 rounded-2xl border border-slate-800 flex flex-col justify-between">
-                    <div>
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-md bg-indigo-950 text-indigo-400 border border-indigo-800 uppercase tracking-wider">${c.relationship_type}</span>
-                            <span class="text-[10px] text-emerald-400 font-bold">✓ Active</span>
+            <div>
+                ${myCoaches.length === 0 ? `
+                <div class="p-6 text-center rounded-2xl bg-slate-900/50 border border-dashed border-slate-800">
+                    <div class="text-3xl mb-2">👨‍🏫</div>
+                    <h4 class="text-sm font-bold text-slate-300">Henüz koç atanmadı</h4>
+                    <p class="text-xs text-slate-500 mt-1">Yöneticiniz veya koçunuz tarafından eşleştirme yapıldığında burada görüntülenecektir.</p>
+                </div>
+                ` : `
+                <div class="bg-slate-900/70 p-5 rounded-2xl border border-slate-800 max-w-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div class="flex items-start gap-4">
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-950/80 border border-indigo-800 flex items-center justify-center text-indigo-400 font-black text-lg shrink-0">
+                            ${escapeHtml(myCoaches[0].coach_name ? myCoaches[0].coach_name.charAt(0) : 'K')}
                         </div>
-                        <h4 class="text-sm font-bold text-white">${c.coach_name}</h4>
-                        <p class="text-xs text-slate-400 mt-0.5">${c.coach_title}</p>
-                        <p class="text-[11px] text-indigo-400 mt-1">${c.specialty || 'Derece Koçluğu'}</p>
+                        <div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-md bg-indigo-950 text-indigo-400 border border-indigo-800 uppercase tracking-wider">${escapeHtml(myCoaches[0].relationship_type === 'MAIN_COACH' ? 'Ana Koç' : (myCoaches[0].coach_title || 'Koç'))}</span>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md ${myCoaches[0].coach_status === 'PASSIVE' ? 'bg-amber-950 text-amber-400 border border-amber-800' : 'bg-emerald-950 text-emerald-400 border border-emerald-800'} flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full ${myCoaches[0].coach_status === 'PASSIVE' ? 'bg-amber-400' : 'bg-emerald-400'}"></span>
+                                    ${myCoaches[0].coach_status === 'PASSIVE' ? 'Pasif' : 'Aktif'}
+                                </span>
+                            </div>
+                            <h4 class="text-base font-bold text-white">${escapeHtml(myCoaches[0].coach_name || 'Koç')}</h4>
+                            <p class="text-xs text-slate-400 mt-0.5">${escapeHtml(myCoaches[0].coach_title || 'YKS Akademik Koçu')}</p>
+                            <p class="text-[11px] text-indigo-400 font-medium mt-1">🎯 Branş / Uzmanlık: ${escapeHtml(myCoaches[0].specialty || 'YKS & LGS Derece Koçluğu')}</p>
+                        </div>
                     </div>
 
-                    <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                        <button onclick="navigateView('messages')" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5 shadow">
-                            <i data-lucide="message-square" class="w-3.5 h-3.5"></i> 💬 Mesaj Gönder
+                    <div class="shrink-0 w-full sm:w-auto pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-800">
+                        <button onclick="navigateView('messages'); if (typeof renderMessagesView === 'function') renderMessagesView(${myCoaches[0].coach_user_id || 2});" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/30">
+                            <i data-lucide="message-square" class="w-4 h-4"></i> 💬 Mesaj Gönder
                         </button>
                     </div>
                 </div>
-                `).join('')}
+                `}
             </div>
         </div>
 
@@ -10299,70 +10312,74 @@ async function renderMufredatView(targetStudentId = null) {
         const activeSubjectData = subjectsList.find(s => s.name === mufredatActiveSubject) || subjectsList[0] || { topics: [] };
 
         let html = `
-        <div class="space-y-6 text-xs">
-            <!-- STICKY ACTIVE STUDENT HEADER BANNER -->
-            <div class="glass-card p-5 border border-slate-800 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
-                <div class="flex items-center gap-4">
-                    <div class="w-12 h-12 rounded-2xl bg-indigo-950 text-indigo-300 border border-indigo-800 font-black text-base flex items-center justify-center shadow">
-                        ${data.student_name ? data.student_name.substring(0, 2).toUpperCase() : 'ÖĞ'}
+        <div class="space-y-6 text-xs max-w-7xl mx-auto">
+            <!-- 1. STICKY / TOP STUDENT HEADER CARD -->
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 shadow-xl">
+                <div class="flex items-center gap-4 sm:gap-5">
+                    <div class="w-14 h-14 rounded-2xl bg-indigo-950/90 text-indigo-300 border border-indigo-800/80 font-black text-lg flex items-center justify-center shadow-lg shrink-0">
+                        ${data.student_name ? escapeHtml(data.student_name.substring(0, 2).toUpperCase()) : 'ÖĞ'}
                     </div>
-                    <div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <h2 class="text-lg font-black text-white">${data.student_name}</h2>
+                    <div class="space-y-1.5">
+                        <div class="flex flex-wrap items-center gap-2.5">
+                            <h2 class="text-xl sm:text-2xl font-black text-[#F8FAFC] tracking-tight uppercase">${escapeHtml(data.student_name || 'Öğrenci')}</h2>
                             <span class="text-[11px] font-extrabold px-3 py-0.5 rounded-full border ${trackBadgeColor}">
                                 ${studentExamSys === 'LGS' ? 'SINAV: LGS (8. Sınıf)' : 'ALAN: ' + currentTrack}
                             </span>
-                            <span class="text-xs text-slate-400 font-medium">${data.student_grade || (studentExamSys === 'LGS' ? '8. Sınıf' : '12. Sınıf')}</span>
+                            <span class="text-xs text-slate-400 font-semibold px-2.5 py-0.5 rounded-full bg-slate-800/80 border border-slate-700/80">${escapeHtml(data.student_grade || (studentExamSys === 'LGS' ? '8. Sınıf' : '12. Sınıf'))}</span>
                         </div>
-                        <p class="text-xs text-slate-400 mt-0.5">Genel Müfredat İlerlemesi: <b class="text-emerald-400 font-black">%${data.overall_progress}</b> (${data.completed_topics} / ${data.total_topics} Ana Konu Tamamlandı)</p>
+                        <div class="flex flex-wrap items-baseline gap-2 pt-0.5">
+                            <span class="text-xs text-[#94A3B8] font-medium">Genel Müfredat İlerlemesi:</span>
+                            <span class="text-2xl sm:text-3xl font-black text-[#22C55E] tracking-tight">%${data.overall_progress}</span>
+                            <span class="text-xs text-[#94A3B8] font-medium">(${data.completed_topics} / ${data.total_topics} Ana Konu Tamamlandı)</span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-start md:justify-end">
+                <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-start lg:justify-end">
                     ${studentExamSys === 'LGS' ? `
-                    <span class="text-xs font-bold text-purple-300 bg-purple-950 border border-purple-800 px-3.5 py-1.5 rounded-xl shadow">LGS MEB 2026 Müfredatı</span>
+                    <span class="text-xs font-bold text-purple-300 bg-purple-950 border border-purple-800 px-4 py-2 rounded-xl shadow">LGS MEB 2026 Müfredatı</span>
                     ` : `
                     <!-- FIELD SWITCHER BUTTONS FOR YKS -->
-                    <div class="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-800">
-                        <span class="text-[10px] text-slate-400 font-bold px-2">Alan:</span>
-                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'SAYISAL')" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${currentTrack === 'SAYISAL' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}">SAY</button>
-                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'EA')" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${currentTrack === 'EA' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-white'}">EA</button>
-                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'SOZEL')" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${currentTrack === 'SOZEL' ? 'bg-rose-600 text-white shadow' : 'text-slate-400 hover:text-white'}">SÖZ</button>
-                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'YDT')" class="px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${currentTrack === 'YDT' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}">YDT</button>
+                    <div class="flex items-center bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 shadow-inner">
+                        <span class="text-[11px] text-slate-400 font-bold px-2">Alan:</span>
+                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'SAYISAL')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${currentTrack === 'SAYISAL' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}">SAY</button>
+                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'EA')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${currentTrack === 'EA' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}">EA</button>
+                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'SOZEL')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${currentTrack === 'SOZEL' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}">SÖZ</button>
+                        <button onclick="changeStudentField(${mufredatActiveStudentId}, 'YDT')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${currentTrack === 'YDT' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}">YDT</button>
                     </div>
                     `}
 
                     ${currentUser && ['COACH', 'ADMIN'].includes(currentUser.role) ? `
-                    <button onclick="navigateView('kaynak-havuzu')" class="bg-indigo-950 hover:bg-indigo-900 text-indigo-300 font-bold text-xs px-4 py-2 rounded-xl border border-indigo-800 transition flex items-center gap-1.5 shadow">
+                    <button onclick="navigateView('kaynak-havuzu')" class="bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 hover:text-white font-bold text-xs px-4 py-2.5 rounded-xl border border-indigo-800 transition flex items-center gap-2 shadow">
                         <i data-lucide="library" class="w-4 h-4 text-[#38BDF8]"></i> 📚 Kaynak Havuzu
                     </button>
-                    <button onclick="clearMufredatStudent()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs px-4 py-2 rounded-xl border border-slate-700 transition flex items-center gap-1.5 shadow">
-                        <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i> Öğrenci Değiştir
+                    <button onclick="clearMufredatStudent()" class="bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs px-4 py-2.5 rounded-xl border border-slate-700 transition flex items-center gap-2 shadow">
+                        <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i> Öğrenciyi Değiştir
                     </button>
                     ` : ''}
                 </div>
             </div>
 
-            <!-- STEP 1: EXAM TYPE TABS ([ TYT ] [ AYT ] / [ YDT ]) -->
-            <div class="flex items-center gap-3 border-b border-slate-800 pb-3">
-                <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">1. SINAV SEÇ:</span>
-                <div class="flex items-center gap-2">
+            <!-- 2. EXAM TYPE SELECTOR ([ TYT SINAVI ] [ AYT SINAVI ]) -->
+            <div class="space-y-2 border-b border-slate-800 pb-4">
+                <span class="text-xs font-black text-[#94A3B8] uppercase tracking-wider block">1. SINAV SEÇ:</span>
+                <div class="flex flex-wrap items-center gap-3">
                     ${allowedExams.map(ex => `
-                        <button onclick="setMufredatExamFilter('${ex}')" class="px-5 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 ${mufredatActiveExamType === ex ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-900 text-slate-400 hover:bg-slate-800 border border-slate-800'}">
+                        <button onclick="setMufredatExamFilter('${ex}')" class="px-6 py-2.5 rounded-2xl text-xs sm:text-sm font-black transition flex items-center gap-2.5 ${mufredatActiveExamType === ex ? 'bg-indigo-600 text-white border border-indigo-400/40 shadow-lg shadow-indigo-600/30 ring-2 ring-indigo-500/20' : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 border border-slate-800'}">
                             <i data-lucide="book-open" class="w-4 h-4"></i> ${ex} SINAVI
                         </button>
                     `).join('')}
                 </div>
             </div>
 
-            <!-- STEP 2: SUBJECT SELECTOR PILLS -->
-            <div class="space-y-2">
-                <span class="text-xs font-bold text-slate-400 uppercase tracking-wider block">2. DERS SEÇ (${mufredatActiveExamType}):</span>
-                <div class="flex flex-wrap items-center gap-2">
+            <!-- 3. SUBJECT SELECTOR BUTTONS ([ Biyoloji 0/12 ] [ Matematik 3/18 ]) -->
+            <div class="space-y-2.5">
+                <span class="text-xs font-black text-[#94A3B8] uppercase tracking-wider block">2. DERS SEÇ (${mufredatActiveExamType}):</span>
+                <div class="flex flex-wrap items-center gap-2.5">
                     ${subjectsList.map(s => `
-                        <button onclick="setMufredatSubjectFilter('${s.name}')" class="px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${mufredatActiveSubject === s.name ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg' : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'}">
-                            <span>${s.name}</span>
-                            <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full ${mufredatActiveSubject === s.name ? 'bg-emerald-950 text-emerald-200' : 'bg-slate-800 text-slate-400'}">
+                        <button onclick="setMufredatSubjectFilter('${escapeHtml(s.name)}')" class="px-4 py-2.5 rounded-2xl text-xs font-bold transition flex items-center gap-2.5 ${mufredatActiveSubject === s.name ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-black border border-emerald-400/40 shadow-lg shadow-emerald-950/40' : 'bg-slate-900/80 text-slate-200 hover:text-white hover:bg-slate-800 border border-slate-800 hover:border-slate-700'}">
+                            <span>${escapeHtml(s.name)}</span>
+                            <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${mufredatActiveSubject === s.name ? 'bg-emerald-950/90 text-emerald-200 border border-emerald-700/60' : 'bg-slate-800 text-slate-400 border border-slate-700'}">
                                 ${s.completed_topics}/${s.total_topics}
                             </span>
                         </button>
@@ -10370,105 +10387,129 @@ async function renderMufredatView(targetStudentId = null) {
                 </div>
             </div>
 
-            <!-- STEP 3: MAIN TOPICS & MULTI-RESOURCE LIST -->
+            <!-- 4. MAIN TOPICS AREA -->
             <div class="space-y-4 pt-2">
-                <div class="flex items-center justify-between bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-900/80 p-5 rounded-2xl border border-slate-800 shadow-md">
                     <div>
-                        <h3 class="text-base font-black text-white flex items-center gap-2">
+                        <h3 class="text-base sm:text-lg font-black text-[#F8FAFC] flex items-center gap-2.5">
                             <i data-lucide="layers" class="w-5 h-5 text-indigo-400"></i>
-                            ${mufredatActiveExamType} → ${activeSubjectData.name || 'Ders'} Ana Konuları
+                            ${mufredatActiveExamType} → ${escapeHtml(activeSubjectData.name || 'Ders')} Ana Konuları
                         </h3>
-                        <p class="text-xs text-slate-400 mt-0.5">Atanan tüm kaynaklar ve tamamlama durumları (${activeSubjectData.completed_topics || 0} / ${activeSubjectData.total_topics || 0} Ana Konu)</p>
+                        <p class="text-xs text-[#94A3B8] mt-1">Atanan tüm kaynaklar ve tamamlama durumları (${activeSubjectData.completed_topics || 0} / ${activeSubjectData.total_topics || 0} Ana Konu)</p>
                     </div>
-                    <span class="text-sm font-black text-emerald-400">%${activeSubjectData.progress || 0} İlerleme</span>
+                    <span class="text-sm sm:text-base font-black text-[#22C55E] bg-emerald-950/80 border border-emerald-800/80 px-4 py-1.5 rounded-xl shadow">%${activeSubjectData.progress || 0} İlerleme</span>
                 </div>
 
-                <div class="space-y-3">
+                <div class="space-y-3.5">
         `;
 
         const topicsList = activeSubjectData.topics || [];
         if (topicsList.length === 0) {
-            html += `<div class="glass-card p-8 rounded-2xl border border-[#E2E8F0] text-center text-[#64748B]">Bu derse ait henüz ana konu bulunmuyor.</div>`;
+            html += `<div class="glass-card p-8 rounded-2xl border border-slate-800 text-center text-slate-400">Bu derse ait henüz ana konu bulunmuyor.</div>`;
         } else {
-            topicsList.forEach(top => {
-                let topicStatusBadge = '';
-                if (top.topic_status === 'COMPLETED') {
-                    topicStatusBadge = `<span class="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] flex items-center gap-1">🟢 Konu Tamamlandı</span>`;
-                } else if (top.topic_status === 'IN_PROGRESS') {
-                    topicStatusBadge = `<span class="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#FFF7ED] text-[#C2410C] border border-[#FED7AA] flex items-center gap-1">🟡 Devam Ediyor</span>`;
-                } else if (top.topic_status === 'UNASSIGNED') {
-                    topicStatusBadge = `<span class="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#F8FAFC] text-[#64748B] border border-[#E2E8F0]">⚪ Kaynak Atanmadı</span>`;
+            topicsList.forEach((top, idx) => {
+                const assignedList = top.assigned_resources || [];
+                const isCompleted = top.topic_status === 'COMPLETED';
+                const isInProgress = top.topic_status === 'IN_PROGRESS';
+                const hasResources = assignedList.length > 0;
+
+                // Status Badge logic
+                let statusBadge = '';
+                if (isCompleted) {
+                    statusBadge = `
+                    <span class="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-xl bg-emerald-950/80 text-emerald-300 border border-emerald-800/80">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> ✓ Konu Tamamlandı
+                    </span>`;
+                } else if (isInProgress) {
+                    statusBadge = `
+                    <span class="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-xl bg-amber-950/80 text-amber-300 border border-amber-800/80">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> 🟡 Devam Ediyor
+                    </span>`;
+                } else if (hasResources) {
+                    statusBadge = `
+                    <span class="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-xl bg-indigo-950/80 text-indigo-300 border border-indigo-800/80">
+                        <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> ✓ ${assignedList.length} Kaynak
+                    </span>`;
                 } else {
-                    topicStatusBadge = `<span class="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#F8FAFC] text-[#475569] border border-[#E2E8F0]">⚪ Başlanmadı</span>`;
+                    statusBadge = `
+                    <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-xl bg-slate-800/80 text-slate-300 border border-slate-700">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> ○ Kaynak Atanmadı
+                    </span>`;
                 }
 
-                const assignedList = top.assigned_resources || [];
-
                 html += `
-                <div class="glass-card p-4 rounded-2xl border border-[#E2E8F0] space-y-3 hover:border-[#CBD5E1] transition bg-white shadow-sm">
+                <div class="bg-slate-900/85 p-5 rounded-2xl border ${isCompleted ? 'border-emerald-900/60 bg-gradient-to-r from-slate-900/90 via-slate-900/90 to-emerald-950/20' : 'border-slate-800/90'} space-y-4 hover:border-indigo-500/50 hover:bg-slate-900 transition-all duration-200 shadow-md">
                     <!-- TOPIC HEADER ROW -->
-                    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-2 border-b border-[#E2E8F0]">
-                        <div class="flex items-center gap-3">
-                            <span class="w-3 h-3 rounded-full ${top.topic_status === 'COMPLETED' ? 'bg-[#16A34A]' : top.topic_status === 'IN_PROGRESS' ? 'bg-[#D97706]' : 'bg-[#94A3B8]'}"></span>
-                            <h4 class="font-black text-sm text-[#172033]">${top.topic_name}</h4>
+                    <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-3.5 border-b border-slate-800/80">
+                        <div class="flex items-start gap-3.5">
+                            <div class="w-8 h-8 rounded-xl ${isCompleted ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-800' : 'bg-indigo-950/90 text-indigo-300 border border-indigo-800/80'} font-black text-xs flex items-center justify-center shrink-0 shadow-inner mt-0.5">
+                                ${idx + 1}
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-sm sm:text-base text-[#F8FAFC] leading-snug">${escapeHtml(top.topic_name)}</h4>
+                                <p class="text-xs text-[#94A3B8] font-normal mt-0.5">${escapeHtml(activeSubjectData.name)} • ${assignedList.length} Kaynak Atandı</p>
+                            </div>
                         </div>
 
-                        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-                            ${topicStatusBadge}
+                        <div class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-between lg:justify-end">
+                            ${statusBadge}
 
-                            <!-- DECOUPLED TOPIC COMPLETION BUTTON -->
-                            <button onclick="toggleMainTopicStatus(${mufredatActiveStudentId}, ${top.curriculum_id}, '${top.topic_status}')" class="bg-white hover:bg-[#F8FAFC] text-[#334155] border border-[#CBD5E1] font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1">
-                                <i data-lucide="check-circle-2" class="w-3.5 h-3.5 ${top.topic_status === 'COMPLETED' ? 'text-[#16A34A]' : 'text-[#64748B]'}"></i> 
-                                ${top.topic_status === 'COMPLETED' ? '✓ Konu Tamam' : 'Konuyu Tamamla'}
+                            <!-- TOPIC COMPLETION BUTTON (Secondary Action) -->
+                            <button onclick="toggleMainTopicStatus(${mufredatActiveStudentId}, ${top.curriculum_id}, '${top.topic_status}')" class="${isCompleted ? 'bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700' : 'bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700'} font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm">
+                                <i data-lucide="check-circle-2" class="w-3.5 h-3.5 ${isCompleted ? 'text-emerald-400' : 'text-slate-400'}"></i> 
+                                ${isCompleted ? '✓ Konu Tamamlandı' : '○ Konuyu Tamamla'}
                             </button>
 
-                            <!-- COACH MULTI-RESOURCE ASSIGNMENT BUTTON -->
+                            <!-- COACH MULTI-RESOURCE ASSIGNMENT BUTTON (Primary Action) -->
                             ${currentUser && ['COACH', 'ADMIN'].includes(currentUser.role) ? `
-                            <button onclick="openAssignResourceToTopicModal(${mufredatActiveStudentId}, ${top.curriculum_id}, '${activeSubjectData.name}', '${top.topic_name}')" class="bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition flex items-center gap-1">
-                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Kaynak Ata (${assignedList.length})
+                            <button onclick="openAssignResourceToTopicModal(${mufredatActiveStudentId}, ${top.curriculum_id}, '${escapeHtml(activeSubjectData.name)}', '${escapeHtml(top.topic_name)}')" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md shadow-indigo-900/30 transition flex items-center gap-1.5">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> + Kaynak Ata (${assignedList.length})
                             </button>
                             ` : ''}
                         </div>
                     </div>
 
                     <!-- ASSIGNED MULTIPLE RESOURCES SUB-LIST -->
-                    <div class="pl-2 space-y-2">
+                    <div class="space-y-2.5 pt-1">
                 `;
 
                 if (assignedList.length === 0) {
-                    html += `<p class="text-[11px] text-[#64748B] font-medium italic py-1">Bu konuya atanmış kaynak yok. Yandaki <b>'+ Kaynak Ata'</b> butonundan kaynak ekleyebilirsiniz.</p>`;
+                    html += `
+                    <div class="p-3.5 rounded-xl bg-slate-950/40 border border-dashed border-slate-800/80 text-slate-400 text-xs flex items-center gap-2.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-500"></span> Bu konuya henüz kaynak atanmadı. Yandaki <b class="text-indigo-400">'+ Kaynak Ata'</b> butonundan kaynak ekleyebilirsiniz.
+                    </div>`;
                 } else {
                     assignedList.forEach(r => {
                         let rStatusBadge = '';
                         if (r.status === 'COMPLETED') {
-                            rStatusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0]">🟢 100% Tamamlandı</span>`;
+                            rStatusBadge = `<span class="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-emerald-950/90 text-emerald-300 border border-emerald-800/90 flex items-center gap-1">🟢 100% Tamamlandı</span>`;
                         } else if (r.status === 'IN_PROGRESS') {
-                            rStatusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-[#FFF7ED] text-[#C2410C] border border-[#FED7AA]">🟡 %${r.progress_percentage || 50} Devam Ediyor</span>`;
+                            rStatusBadge = `<span class="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-amber-950/90 text-amber-300 border border-amber-800/90 flex items-center gap-1">🟡 %${r.progress_percentage || 50} Devam Ediyor</span>`;
                         } else {
-                            rStatusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-[#F8FAFC] text-[#64748B] border border-[#E2E8F0]">⚪ 0% Başlanmadı</span>`;
+                            rStatusBadge = `<span class="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">⚪ 0% Başlanmadı</span>`;
                         }
 
                         html += `
-                        <div class="bg-[#F8FAFC] p-2.5 rounded-xl border border-[#E2E8F0] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 hover:border-[#CBD5E1] transition">
-                            <div class="flex items-center gap-2.5">
-                                <span class="text-sm">📘</span>
+                        <div class="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:border-slate-700 transition shadow-sm">
+                            <div class="flex items-center gap-3">
+                                <span class="text-base">📘</span>
                                 <div>
-                                    <span class="font-bold text-xs text-[#2563EB]">${r.resource_title}</span>
-                                    <span class="text-[10px] text-[#64748B] font-normal">(${r.publisher_name})</span>
+                                    <span class="font-bold text-xs text-indigo-300 block">${escapeHtml(r.resource_title)}</span>
+                                    <span class="text-[11px] text-[#94A3B8] font-normal">Yayın: ${escapeHtml(r.publisher_name || 'Genel Havuz')}</span>
                                 </div>
                             </div>
 
-                            <div class="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+                            <div class="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-end">
                                 ${rStatusBadge}
 
                                 <!-- INDEPENDENT RESOURCE COMPLETION TOGGLE -->
-                                <button onclick="toggleMufredatResourceStatus(${r.topic_resource_id}, '${r.status}', ${mufredatActiveStudentId})" class="bg-[#059669] hover:bg-[#047857] text-white font-bold text-[11px] px-3 py-1 rounded-lg transition flex items-center gap-1">
+                                <button onclick="toggleMufredatResourceStatus(${r.topic_resource_id}, '${r.status}', ${mufredatActiveStudentId})" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3.5 py-1.5 rounded-lg transition flex items-center gap-1 shadow-sm">
                                     <i data-lucide="check" class="w-3 h-3"></i> ${r.status === 'COMPLETED' ? '✓ Bitirildi' : 'Bitir'}
                                 </button>
 
                                 <!-- UNASSIGN / REMOVE RESOURCE BUTTON -->
                                 ${currentUser && ['COACH', 'ADMIN'].includes(currentUser.role) ? `
-                                <button onclick="unassignMufredatTopicResource(${r.topic_resource_id}, ${mufredatActiveStudentId})" title="Atamayı Kaldır" class="bg-white hover:bg-[#FEF2F2] text-[#64748B] hover:text-[#DC2626] p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border border-[#CBD5E1] transition">
+                                <button onclick="unassignMufredatTopicResource(${r.topic_resource_id}, ${mufredatActiveStudentId})" title="Atamayı Kaldır" class="bg-slate-800 hover:bg-rose-950/80 text-slate-400 hover:text-rose-300 p-2 min-w-[34px] min-h-[34px] flex items-center justify-center rounded-lg border border-slate-700 hover:border-rose-800 transition">
                                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                                 </button>
                                 ` : ''}

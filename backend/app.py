@@ -851,6 +851,12 @@ def admin_change_student_coach(student_id):
     except Exception:
         pass
 
+    try:
+        cursor.execute("DELETE FROM coach_student_relationships WHERE student_id = ? AND relationship_type = 'MAIN_COACH';", (student_id,))
+        cursor.execute("INSERT INTO coach_student_relationships (coach_id, student_id, relationship_type, status, assigned_by) VALUES (?, ?, 'MAIN_COACH', 'ACTIVE', ?);", (new_coach_id, student_id, user['id']))
+    except Exception:
+        pass
+
 
     conn.commit()
     log_activity(user['id'], user['role'], 'CHANGE_STUDENT_COACH', 'students', student_id, {'old_coach_id': old_coach_id, 'new_coach_id': new_coach_id}, cursor=cursor)
@@ -6149,7 +6155,7 @@ def get_my_connected_students():
         'pending_requests': pending_requests
     })
 
-# GET /api/rel/my-coaches - List all assigned coaches for logged in student
+# GET /api/rel/my-coaches - List single main assigned coach for logged in student
 @app.route('/api/rel/my-coaches', methods=['GET'])
 def get_my_coaches():
     user = get_auth_user()
@@ -6161,11 +6167,40 @@ def get_my_coaches():
 
     student_id = request.args.get('student_id')
     if not student_id and user['role'] == 'STUDENT':
-        cursor.execute("SELECT id FROM students WHERE user_id = ?;", (user['id'],))
+        cursor.execute("SELECT id, coach_id FROM students WHERE user_id = ?;", (user['id'],))
         st = cursor.fetchone()
-        student_id = st['id'] if st else 1
+        student_id = st['id'] if st else None
+    elif student_id:
+        try:
+            student_id = int(student_id)
+        except Exception:
+            student_id = None
 
-    cursor.execute("SELECT csr.id as rel_id, csr.relationship_type, csr.status as rel_status, csr.assigned_at, c.id as coach_id, c.user_id as coach_user_id, cu.name as coach_name, cu.email as coach_email, c.title as coach_title, c.specialty, c.coach_code FROM coach_student_relationships csr JOIN coaches c ON csr.coach_id = c.id JOIN users cu ON c.user_id = cu.id WHERE csr.student_id = ? AND csr.status = 'ACTIVE';", (student_id,))
+    if not student_id:
+        conn.close()
+        return jsonify({'coaches': []})
+
+    # Fetch the single main assigned coach using students.coach_id as single source of truth
+    cursor.execute("""
+    SELECT csr.id as rel_id,
+           COALESCE(csr.relationship_type, 'MAIN_COACH') as relationship_type,
+           COALESCE(csr.status, 'ACTIVE') as rel_status,
+           COALESCE(csr.assigned_at, CURRENT_TIMESTAMP) as assigned_at,
+           c.id as coach_id,
+           c.user_id as coach_user_id,
+           cu.name as coach_name,
+           cu.email as coach_email,
+           COALESCE(c.title, 'YKS / LGS Koçu') as coach_title,
+           COALESCE(c.specialty, 'Derece & Akademik Koçluk') as specialty,
+           c.coach_code,
+           COALESCE(cu.status, 'ACTIVE') as coach_status
+    FROM students s
+    JOIN coaches c ON s.coach_id = c.id
+    JOIN users cu ON c.user_id = cu.id
+    LEFT JOIN coach_student_relationships csr ON (csr.student_id = s.id AND csr.coach_id = c.id AND csr.status = 'ACTIVE')
+    WHERE s.id = ?
+    LIMIT 1;
+    """, (student_id,))
     coaches = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return jsonify({'coaches': coaches})
@@ -6188,10 +6223,21 @@ def admin_assign_coach():
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("INSERT INTO coach_student_relationships (coach_id, student_id, relationship_type, status, assigned_by) VALUES (?, ?, ?, 'ACTIVE', ?);", (coach_id, student_id, rel_type, user['id']))
-
     if rel_type == 'MAIN_COACH':
         cursor.execute("UPDATE students SET coach_id = ? WHERE id = ?;", (coach_id, student_id))
+        try:
+            cursor.execute("DELETE FROM coach_students WHERE student_id = ?;", (student_id,))
+            cursor.execute("INSERT INTO coach_students (coach_id, student_id) VALUES (?, ?);", (coach_id, student_id))
+        except Exception:
+            pass
+
+    # Upsert single relationship record for (student_id, coach_id)
+    cursor.execute("SELECT id FROM coach_student_relationships WHERE student_id = ? AND coach_id = ?;", (student_id, coach_id))
+    existing_rel = cursor.fetchone()
+    if existing_rel:
+        cursor.execute("UPDATE coach_student_relationships SET relationship_type = ?, status = 'ACTIVE', assigned_by = ? WHERE id = ?;", (rel_type, user['id'], existing_rel['id']))
+    else:
+        cursor.execute("INSERT INTO coach_student_relationships (coach_id, student_id, relationship_type, status, assigned_by) VALUES (?, ?, ?, 'ACTIVE', ?);", (coach_id, student_id, rel_type, user['id']))
 
     conn.commit()
     conn.close()
