@@ -244,7 +244,11 @@ class PostgresConnectionWrapper:
         if not self._is_closed and not self._conn.closed:
             return self._conn.rollback()
 
-    def close(self):
+    def close(self, force=False):
+        # In Flask request context, keep connection open for reuse until teardown unless force=True
+        if has_app_context() and not force:
+            return
+
         if self._is_closed:
             return
         self._is_closed = True

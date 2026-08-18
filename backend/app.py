@@ -108,7 +108,11 @@ def close_db_connection(exception=None):
     db = g.pop('db', None)
     if db is not None:
         try:
-            db.close()
+            if hasattr(db, 'close'):
+                try:
+                    db.close(force=True)
+                except TypeError:
+                    db.close()
         except Exception:
             pass
 
@@ -1852,13 +1856,27 @@ def handle_mock_exams():
         last_5_avg = round(sum(nets_all[:5]) / float(len(nets_all[:5])), 2) if len(nets_all[:5]) > 0 else 0.0
 
         today_dt = date.today()
-        dt_30_days = (today_dt - timedelta(days=30)).isoformat()
-        dt_90_days = (today_dt - timedelta(days=90)).isoformat()
+        dt_30_days = today_dt - timedelta(days=30)
+        dt_90_days = today_dt - timedelta(days=90)
 
-        nets_30_days = [a['total_net'] for a in enriched_attempts if a.get('exam_date') and a['exam_date'] >= dt_30_days]
+        def _to_date(val):
+            if not val:
+                return None
+            if isinstance(val, date) and not isinstance(val, datetime):
+                return val
+            if isinstance(val, datetime):
+                return val.date()
+            if isinstance(val, str):
+                try:
+                    return datetime.strptime(val[:10], '%Y-%m-%d').date()
+                except Exception:
+                    return None
+            return None
+
+        nets_30_days = [a['total_net'] for a in enriched_attempts if _to_date(a.get('exam_date')) and _to_date(a.get('exam_date')) >= dt_30_days]
         days_30_avg = round(sum(nets_30_days) / float(len(nets_30_days)), 2) if len(nets_30_days) > 0 else avg_net
 
-        nets_90_days = [a['total_net'] for a in enriched_attempts if a.get('exam_date') and a['exam_date'] >= dt_90_days]
+        nets_90_days = [a['total_net'] for a in enriched_attempts if _to_date(a.get('exam_date')) and _to_date(a.get('exam_date')) >= dt_90_days]
         months_3_avg = round(sum(nets_90_days) / float(len(nets_90_days)), 2) if len(nets_90_days) > 0 else avg_net
 
         summary = {
