@@ -1,4 +1,10 @@
+import sys
 import os
+
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 import json
 import io
 import math
@@ -48,6 +54,22 @@ except Exception as _e:
 @app.route('/uploads/<path:filename>')
 def serve_uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    db_status = "ok"
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT 1;")
+        cur.fetchone()
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
+    return jsonify({
+        "status": "ok",
+        "database": db_status
+    }), 200
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -7634,5 +7656,6 @@ def handle_notification_preferences():
 
 
 if __name__ == '__main__':
-    print("Starting YKS Platform Full-Stack Server on port 5005...")
-    app.run(host='0.0.0.0', port=5005, debug=False, use_reloader=False, threaded=True)
+    port = int(os.environ.get("PORT", 5005))
+    print(f"Starting YKS Platform Server on port {port}...")
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)

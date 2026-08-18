@@ -33,7 +33,22 @@ if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
                     pass
     DB_PATH = TMP_DB_PATH
 else:
-    DB_PATH = os.environ.get("DATABASE_PATH", DEFAULT_DB_PATH)
+    custom_db_path = os.environ.get("DATABASE_PATH")
+    if custom_db_path:
+        db_dir = os.path.dirname(os.path.abspath(custom_db_path))
+        if db_dir:
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+            except Exception:
+                pass
+        if not os.path.exists(custom_db_path) and os.path.exists(DEFAULT_DB_PATH):
+            try:
+                shutil.copy2(DEFAULT_DB_PATH, custom_db_path)
+            except Exception:
+                pass
+        DB_PATH = custom_db_path
+    else:
+        DB_PATH = DEFAULT_DB_PATH
 
 def get_db():
     if has_app_context() and g is not None:
