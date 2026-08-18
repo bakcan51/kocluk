@@ -1,2 +1,2 @@
-/api/*  https://RENDER-BACKEND-URL/api/:splat  200!
-/*      /index.html                            200
+/api/*  https://yks-kocluk-backend.onrender.com/api/:splat  200!
+/*      /index.html                                          200
