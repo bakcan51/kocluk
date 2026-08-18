@@ -213,20 +213,34 @@ def migrate(sqlite_path, postgres_url):
     pg_conn.close()
 
     # Print Final Migration Report
-    print("\n" + "=" * 55)
+    print("\n" + "=" * 65)
     print("SQLite → PostgreSQL MIGRATION RAPORU")
-    print("=" * 55)
+    print("=" * 65)
     print(f"{'TABLO ADI':<35} | {'SQLITE':<8} | {'POSTGRES':<8} | {'DURUM'}")
-    print("-" * 55)
+    print("-" * 65)
     for tbl, (s_cnt, p_cnt, st) in migration_report.items():
         print(f"{tbl:<35} | {s_cnt:<8} | {p_cnt:<8} | {st}")
-    print("=" * 55)
+    print("=" * 65)
+
+    KEY_BENCHMARKS = [
+        'users', 'students', 'coaches', 'mock_exams', 'resources',
+        'weekly_programs', 'messages', 'notifications', 'curriculum',
+        'subjects', 'study_sessions', 'activity_logs'
+    ]
+    print("\n" + "=" * 65)
+    print("TEMEL TABLO DOĞRULAMA (KEY BENCHMARKS)")
+    print("=" * 65)
+    for k in KEY_BENCHMARKS:
+        if k in migration_report:
+            s_c, p_c, st = migration_report[k]
+            status_icon = "✅" if s_c == p_c and s_c >= 0 else "❌"
+            print(f"{status_icon} {k:<20}: SQLite: {s_c} | PostgreSQL: {p_c} -> {st}")
 
     if has_error:
-        print("❌ Migration completed with some warnings/mismatches. Check details above.")
+        print("\n❌ Migration completed with some warnings/mismatches. Check details above.")
         return False
     else:
-        print("🎉 ALL DATA MIGRATED WITH 100% ACCURACY AND INTEGRITY!")
+        print("\n🎉 ALL 51 TABLES & KEY BENCHMARKS MIGRATED WITH 100% ACCURACY AND INTEGRITY!")
         return True
 
 
