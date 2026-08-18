@@ -9019,9 +9019,6 @@ async function renderWeeklyProgramView(studentId = null) {
                     </div>
 
                     ${!isStudentRole ? `
-                    <button onclick="publishWeeklyProgramToServer()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black transition text-xs shadow-lg flex items-center gap-1.5">
-                        💾 Kaydet
-                    </button>
                     <button onclick="confirmClearWeeklyGrid()" class="px-3 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold border border-rose-800 transition text-xs flex items-center gap-1">
                         🗑️ Temizle
                     </button>
@@ -9181,18 +9178,22 @@ async function renderWeeklyProgramView(studentId = null) {
 }
 
 // ----------------------------------------------------
-// DIRECT IN-CELL RENDERING & OPTIMISTIC EDITING
+// EXCEL-STYLE IN-CELL RENDERING & AUTOSAVE CONTROLLER
 // ----------------------------------------------------
-function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, isStudentRole) {
+function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, isStudentRole, savedNotice = false, errorNotice = null) {
     if (item && item.title) {
         const isComp = (item.status === 'TAMAMLANDI' || item.completion_status === 'TAMAMLANDI');
         return `
         <div id="cell_view_${cellDomId}" 
              onclick="${isStudentRole ? `toggleStudentInlineTask('${cellDomId}', ${item.id}, ${!isComp})` : `activateInlineCellEdit('${cellDomId}')`}"
-             class="h-full min-h-[75px] rounded-xl p-2 flex flex-col justify-between cursor-pointer transition border text-[11px] group select-none ${
-                 isComp 
-                     ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-200 shadow-sm' 
-                     : 'bg-slate-900/90 border-slate-700/80 text-white hover:border-indigo-500 shadow-sm'
+             class="h-full min-h-[75px] rounded-xl p-2 flex flex-col justify-between cursor-pointer transition border text-[11px] group select-none relative ${
+                 errorNotice 
+                     ? 'bg-rose-950/80 border-rose-600 text-rose-200 shadow-md' 
+                     : isComp 
+                         ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-200 shadow-sm' 
+                         : savedNotice
+                             ? 'bg-slate-900 border-emerald-500 ring-1 ring-emerald-500/50 text-white shadow-md'
+                             : 'bg-slate-900/90 border-slate-700/80 text-white hover:border-indigo-500 shadow-sm'
              }">
             <div class="font-bold leading-snug line-clamp-3 whitespace-pre-wrap break-words text-[11px]">
                 ${isComp ? '<span class="text-emerald-400 font-black mr-1">✓</span>' : ''}${escapeHtml(item.title)}
@@ -9201,7 +9202,11 @@ function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, 
                 <span class="${isComp ? 'text-emerald-400 font-extrabold' : 'text-slate-400'}">
                     ${isComp ? '✓ Tamamlandı' : '○ Bekliyor'}
                 </span>
-                ${!isStudentRole ? `
+                ${savedNotice ? `
+                <span class="text-[9px] text-emerald-400 font-extrabold animate-pulse">✓ Kaydedildi</span>
+                ` : errorNotice ? `
+                <span class="text-[9px] text-rose-400 font-extrabold" title="${escapeHtml(errorNotice)}">⚠ ${escapeHtml(errorNotice)}</span>
+                ` : !isStudentRole ? `
                 <span class="text-[9px] text-slate-500 opacity-0 group-hover:opacity-100 transition">✏️</span>
                 ` : `
                 <span class="text-[8px] px-1 py-0.2 rounded ${isComp ? 'bg-amber-950 text-amber-300' : 'bg-emerald-950 text-emerald-300'} font-bold">
@@ -9215,17 +9220,22 @@ function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, 
         return `
         <div id="cell_view_${cellDomId}" 
              ${!isStudentRole ? `onclick="activateInlineCellEdit('${cellDomId}')"` : ''}
-             class="h-full min-h-[75px] rounded-xl p-2 flex items-center justify-center cursor-pointer transition border border-dashed border-slate-800/80 text-slate-600 hover:text-indigo-300 hover:border-indigo-500/60 text-[11px] select-none hover:bg-slate-800/20">
-            <span class="text-[10px] font-medium">${!isStudentRole ? '+ Ders / Görev...' : 'Boş'}</span>
+             class="h-full min-h-[75px] rounded-xl p-2 flex items-center justify-center cursor-pointer transition border border-dashed text-[11px] select-none hover:bg-slate-800/20 ${
+                 errorNotice ? 'border-rose-600 bg-rose-950/40 text-rose-300' : 'border-slate-800/80 text-slate-600 hover:text-indigo-300 hover:border-indigo-500/60'
+             }">
+            <span class="text-[10px] font-medium">${errorNotice ? `⚠ ${escapeHtml(errorNotice)}` : (!isStudentRole ? '+ Ders / Görev...' : 'Boş')}</span>
         </div>
         `;
     }
 }
 
-// DIRECT IN-CELL EDIT ACTIVATION
+// DIRECT IN-CELL EDIT ACTIVATION (EXCEL STYLE)
 function activateInlineCellEdit(cellDomId) {
     const td = document.getElementById(`wp_td_${cellDomId}`);
     if (!td) return;
+
+    // Check if already in edit mode
+    if (document.getElementById(`cell_input_${cellDomId}`)) return;
 
     const progDate = td.dataset.date;
     const startTime = td.dataset.start;
@@ -9234,25 +9244,13 @@ function activateInlineCellEdit(cellDomId) {
     const existingTitle = item ? (item.title || '') : '';
 
     td.innerHTML = `
-    <div id="cell_edit_${cellDomId}" class="h-full min-h-[95px] rounded-xl p-1.5 bg-slate-950 border-2 border-indigo-500 shadow-2xl flex flex-col justify-between z-20 relative">
+    <div id="cell_edit_${cellDomId}" class="h-full min-h-[75px] rounded-xl p-1 bg-slate-950 border-2 border-indigo-500 shadow-xl flex flex-col justify-between z-20 relative">
         <textarea id="cell_input_${cellDomId}" 
-                  class="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-white font-bold text-[11px] leading-tight focus:outline-none focus:border-indigo-400 resize-none h-14"
-                  placeholder="Ders, konu, 40 soru...">${escapeHtml(existingTitle)}</textarea>
-        <div class="flex items-center justify-between gap-1 mt-1 pt-1 border-t border-slate-800">
-            <div class="flex items-center gap-1">
-                <button type="button" onclick="saveInlineCell('${cellDomId}')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] px-2 py-0.5 rounded-md shadow transition flex items-center gap-0.5">
-                    💾 Kaydet
-                </button>
-                <button type="button" onclick="cancelInlineCell('${cellDomId}')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] px-1.5 py-0.5 rounded-md transition">
-                    ✕
-                </button>
-            </div>
-            ${item && item.id ? `
-            <button type="button" onclick="deleteInlineCell('${cellDomId}', ${item.id})" title="Görevi Sil" class="bg-rose-950 hover:bg-rose-900 text-rose-300 font-bold text-[10px] px-1.5 py-0.5 rounded-md border border-rose-800 transition">
-                🗑️
-            </button>
-            ` : ''}
-        </div>
+                  data-original-val="${escapeHtml(existingTitle)}"
+                  onblur="handleInlineCellBlur('${cellDomId}')"
+                  onkeydown="handleInlineCellKeyDown(event, '${cellDomId}')"
+                  class="w-full bg-slate-900 border-none outline-none rounded-lg p-1.5 text-white font-bold text-[11px] leading-tight resize-none h-full min-h-[65px] focus:ring-0"
+                  placeholder="Ders, konu veya görev...">${escapeHtml(existingTitle)}</textarea>
     </div>
     `;
 
@@ -9260,20 +9258,46 @@ function activateInlineCellEdit(cellDomId) {
     if (ta) {
         ta.focus();
         ta.setSelectionRange(ta.value.length, ta.value.length);
-        ta.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                e.preventDefault();
-                saveInlineCell(cellDomId);
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                cancelInlineCell(cellDomId);
-            }
-        });
+    }
+}
+
+// KEYBOARD CONTROLLER (ENTER / TAB / ESC)
+function handleInlineCellKeyDown(e, cellDomId) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        e.target.blur(); // Triggers blur which calls autosave
+    } else if (e.key === 'Tab') {
+        e.preventDefault();
+        e.target.blur();
+        navigateToAdjacentCell(cellDomId, e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        const origVal = e.target.dataset.originalVal || '';
+        cancelInlineCellEdit(cellDomId, origVal);
+    }
+}
+
+// TAB NAVIGATION ACROSS CELLS
+function navigateToAdjacentCell(cellDomId, direction = 1) {
+    const allCells = Array.from(document.querySelectorAll('td[id^="wp_td_"]'));
+    if (allCells.length === 0) return;
+
+    const currentTd = document.getElementById(`wp_td_${cellDomId}`);
+    const currentIndex = allCells.indexOf(currentTd);
+    if (currentIndex === -1) return;
+
+    const nextIndex = currentIndex + direction;
+    if (nextIndex >= 0 && nextIndex < allCells.length) {
+        const nextTd = allCells[nextIndex];
+        const nextCellDomId = nextTd.id.replace('wp_td_', '');
+        setTimeout(() => {
+            activateInlineCellEdit(nextCellDomId);
+        }, 30);
     }
 }
 
 // CANCEL INLINE CELL EDIT
-function cancelInlineCell(cellDomId) {
+function cancelInlineCellEdit(cellDomId, origVal = '') {
     const td = document.getElementById(`wp_td_${cellDomId}`);
     if (!td) return;
     const progDate = td.dataset.date;
@@ -9286,12 +9310,28 @@ function cancelInlineCell(cellDomId) {
     td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, isStudentRole);
 }
 
-// DIRECT IN-CELL SAVE (OPTIMISTIC - NO PAGE RELOAD)
-async function saveInlineCell(cellDomId) {
+// BLUR EVENT HANDLER (EXCEL AUTO-SAVE)
+function handleInlineCellBlur(cellDomId) {
+    const ta = document.getElementById(`cell_input_${cellDomId}`);
+    if (!ta) return;
+
+    const newVal = ta.value.trim();
+    const origVal = (ta.dataset.originalVal || '').trim();
+
+    // 1. If nothing changed, exit edit mode silently without any API call
+    if (newVal === origVal) {
+        cancelInlineCellEdit(cellDomId, origVal);
+        return;
+    }
+
+    // 2. If value changed, trigger silent autosave
+    saveInlineCellAuto(cellDomId, newVal, origVal);
+}
+
+// SILENT BACKGROUND AUTOSAVE (OPTIMISTIC - NO PAGE RELOAD - NO NATIVE POPUPS)
+async function saveInlineCellAuto(cellDomId, newTitle, origTitle) {
     const td = document.getElementById(`wp_td_${cellDomId}`);
     if (!td) return;
-    const ta = document.getElementById(`cell_input_${cellDomId}`);
-    const newTitle = ta ? ta.value.trim() : '';
 
     const progDate = td.dataset.date;
     const dayName = td.dataset.day;
@@ -9304,27 +9344,25 @@ async function saveInlineCell(cellDomId) {
     let items = weeklyProgramState.items || [];
     let existingItem = items.find(i => i && i.date === progDate && i.start_time === startTime);
 
+    // If user cleared text completely -> Delete
     if (!newTitle) {
-        if (existingItem && existingItem.id) {
+        if (existingItem && existingItem.id && !String(existingItem.id).startsWith('temp_')) {
             await deleteInlineCell(cellDomId, existingItem.id);
         } else {
-            cancelInlineCell(cellDomId);
+            if (existingItem) {
+                weeklyProgramState.items = weeklyProgramState.items.filter(i => i !== existingItem);
+            }
+            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, null, isStudentRole);
+            updateWeeklyKpiBar();
         }
         return;
     }
 
-    if (existingItem && existingItem.title === newTitle) {
-        cancelInlineCell(cellDomId);
-        return;
-    }
-
-    // OPTIMISTIC UPDATE
-    const prevTitle = existingItem ? existingItem.title : null;
+    // OPTIMISTIC LOCAL UPDATE
     let isNew = false;
-
     if (existingItem) {
         existingItem.title = newTitle;
-        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole, true);
     } else {
         isNew = true;
         existingItem = {
@@ -9340,14 +9378,31 @@ async function saveInlineCell(cellDomId) {
         };
         items.push(existingItem);
         weeklyProgramState.items = items;
-        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole, true);
     }
 
     updateWeeklyKpiBar();
 
+    // Auto-remove saved badge after 1.2 seconds
+    setTimeout(() => {
+        const currentTd = document.getElementById(`wp_td_${cellDomId}`);
+        if (currentTd && !document.getElementById(`cell_input_${cellDomId}`)) {
+            const currentItem = (weeklyProgramState.items || []).find(i => i && i.date === progDate && i.start_time === startTime);
+            currentTd.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, currentItem, isStudentRole, false);
+        }
+    }, 1200);
+
     // BACKGROUND API CALL
     try {
-        if (isNew) {
+        if (existingItem.id && !String(existingItem.id).startsWith('temp_')) {
+            const res = await fetch(`${API_BASE}/weekly-program/${existingItem.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ title: newTitle })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Güncellenemedi');
+        } else {
             const res = await fetch(`${API_BASE}/weekly-program`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -9363,29 +9418,20 @@ async function saveInlineCell(cellDomId) {
                 })
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Eklenemedi.');
+            if (!res.ok) throw new Error(data.error || 'Kaydedilemedi');
             if (data.id) {
                 existingItem.id = data.id;
-                td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
             }
-        } else {
-            const res = await fetch(`${API_BASE}/weekly-program/${existingItem.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ title: newTitle })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
         }
     } catch (err) {
-        console.error("Inline save error:", err);
-        alert("Değişiklik kaydedilemedi: " + err.message);
+        console.warn("[AUTOSAVE ERROR]", err.message);
+        // Show in-cell error badge silently without native browser popup
         if (isNew) {
             weeklyProgramState.items = weeklyProgramState.items.filter(i => i !== existingItem);
-            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, null, isStudentRole);
+            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, null, isStudentRole, false, err.message);
         } else {
-            existingItem.title = prevTitle;
-            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+            existingItem.title = origTitle;
+            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole, false, err.message);
         }
         updateWeeklyKpiBar();
     }
@@ -9424,10 +9470,9 @@ async function deleteInlineCell(cellDomId, itemId) {
             if (!res.ok) throw new Error(data.error || 'Silinemedi.');
         } catch (err) {
             console.error("Delete error:", err);
-            alert("Görev silinemedi: " + err.message);
             if (backupItem) {
                 weeklyProgramState.items.push(backupItem);
-                td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, backupItem, isStudentRole);
+                td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, backupItem, isStudentRole, false, 'Silinemedi');
                 updateWeeklyKpiBar();
             }
         }
@@ -9466,10 +9511,9 @@ async function toggleStudentInlineTask(cellDomId, itemId, markCompleted) {
         if (!res.ok) throw new Error(data.error || 'Durum güncellenemedi.');
     } catch (err) {
         console.error("Status toggle error:", err);
-        alert("Durum güncellenemedi: " + err.message);
         item.status = prevStatus;
         item.completion_status = prevStatus;
-        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, true);
+        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, true, false, 'Güncellenemedi');
         updateWeeklyKpiBar();
     }
 }

@@ -4115,9 +4115,14 @@ def get_weekly_program():
 
     student_id = request.args.get('student_id')
     if user['role'] == 'STUDENT':
-        student_id = user.get('student_id')
+        student_id = user.get('student_id') or user.get('id')
     elif not student_id:
         return jsonify({'error': 'Öğrenci ID gereklidir'}), 400
+
+    try:
+        student_id = int(student_id)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Geçersiz öğrenci ID'}), 400
 
     week_start = request.args.get('week_start')
     if not week_start:
@@ -4170,7 +4175,15 @@ def get_weekly_program():
         """
 
         cursor.execute(query, (student_id, start_dt.strftime('%Y-%m-%d'), end_dt.strftime('%Y-%m-%d')))
-        items = [dict(row) for row in cursor.fetchall()]
+        items = []
+        for row in cursor.fetchall():
+            it = dict(row)
+            if it.get('date'):
+                if hasattr(it['date'], 'strftime'):
+                    it['date'] = it['date'].strftime('%Y-%m-%d')
+                else:
+                    it['date'] = str(it['date'])[:10]
+            items.append(it)
 
         tot_planned = sum(1 for i in items if i['status'] in ('PLANLANDI', 'PLANNED'))
         tot_completed = sum(1 for i in items if i['status'] in ('TAMAMLANDI', 'COMPLETED'))
@@ -4228,20 +4241,39 @@ def create_weekly_program():
     conn = get_db()
     cursor = conn.cursor()
 
-    # Time Overlap / Conflict Check
+    # 1. Exact Same Time Slot Check (Seamless Upsert / Update without False Conflict)
+    cursor.execute("""
+    SELECT id, title, start_time, end_time FROM weekly_programs
+    WHERE student_id = ? AND date = ? AND start_time = ? AND end_time = ? AND COALESCE(publication_status, 'PUBLISHED') != 'CANCELLED'
+    LIMIT 1;
+    """, (student_id, prog_date, start_time, end_time))
+    exact_match = cursor.fetchone()
+    if exact_match:
+        cursor.execute("""
+        UPDATE weekly_programs 
+        SET title = ?, subject_id = ?, curriculum_topic_id = ?, resource_id = ?, study_type = ?, description = ?, status = ?, completion_status = ?, publication_status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?;
+        """, (title, subject_id, curriculum_topic_id, resource_id, study_type, description, status, status, publication_status, exact_match['id']))
+        conn.commit()
+        prog_id = exact_match['id']
+        log_activity(user['id'], user['role'], 'UPDATE_WEEKLY_PROGRAM', 'weekly_programs', prog_id, {'title': title, 'date': prog_date, 'student_id': student_id}, cursor=cursor)
+        conn.close()
+        return jsonify({'message': 'Program kartı güncellendi', 'id': prog_id})
+
+    # 2. Time Overlap / Conflict Check with OTHER Differing Slots
     cursor.execute("""
     SELECT id, title, start_time, end_time FROM weekly_programs
     WHERE student_id = ? AND date = ? AND COALESCE(publication_status, 'PUBLISHED') != 'CANCELLED'
     AND (
-        (start_time <= ? AND end_time > ?) OR
-        (start_time < ? AND end_time >= ?) OR
-        (start_time >= ? AND end_time <= ?)
+        (start_time < ? AND end_time > ?) OR
+        (start_time >= ? AND start_time < ?) OR
+        (end_time > ? AND end_time <= ?)
     );
-    """, (student_id, prog_date, start_time, start_time, end_time, end_time, start_time, end_time))
+    """, (student_id, prog_date, end_time, start_time, start_time, end_time, start_time, end_time))
     conflict = cursor.fetchone()
     if conflict:
         conn.close()
-        return jsonify({'error': f"Program çakışması! Bu saat diliminde zaten '{conflict['title']}' dersi var ({conflict['start_time']}-{conflict['end_time']})."}), 409
+        return jsonify({'error': f"Program çakışması! Bu saat diliminde '{conflict['title']}' ({conflict['start_time']}-{conflict['end_time']}) dersi bulunuyor."}), 409
 
     coach_id = user.get('coach_id')
 
