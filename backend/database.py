@@ -2,8 +2,16 @@ import sqlite3
 import os
 import shutil
 import json
+import re
 from datetime import datetime, date, timedelta
 import werkzeug.security
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    PSYCOPG2_AVAILABLE = False
 
 try:
     from flask import has_app_context, g
@@ -13,6 +21,15 @@ except ImportError:
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB_PATH = os.path.join(BASE_DIR, "yks_platform.db")
+
+def get_database_url():
+    url = os.environ.get("DATABASE_URL")
+    if url and url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
+
+def is_postgres():
+    return bool(get_database_url() and PSYCOPG2_AVAILABLE)
 
 # On serverless platforms (e.g. Vercel, AWS Lambda), the deployment folder is read-only.
 # We copy the pre-seeded SQLite database to /tmp so writes succeed.
@@ -50,32 +67,185 @@ else:
     else:
         DB_PATH = DEFAULT_DB_PATH
 
-def get_db():
-    if has_app_context() and g is not None:
-        db = getattr(g, 'db', None)
-        if db is not None:
-            try:
-                # Verify database connection is still open
-                db.total_changes
-            except Exception:
-                db = None
-                g.db = None
+# ----------------------------------------------------
+# POSTGRESQL QUERY & CONNECTION WRAPPER
+# ----------------------------------------------------
+def translate_query_for_postgres(sql):
+    if not sql:
+        return ""
+    cleaned = sql.strip()
+    # Ignore PRAGMA commands in PostgreSQL
+    if cleaned.upper().startswith("PRAGMA"):
+        return "SELECT 1;"
 
-        if db is None:
+    # Translate AUTOINCREMENT to SERIAL PRIMARY KEY in DDL
+    sql = re.sub(r'INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT', 'SERIAL PRIMARY KEY', sql, flags=re.IGNORECASE)
+
+    # Translate parameter placeholders '?' to '%s' outside quotes
+    parts = []
+    in_quote = False
+    quote_char = None
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch in ("'", '"') and (i == 0 or sql[i-1] != '\\'):
+            if not in_quote:
+                in_quote = True
+                quote_char = ch
+            elif quote_char == ch:
+                in_quote = False
+                quote_char = None
+            parts.append(ch)
+        elif ch == '?' and not in_quote:
+            parts.append('%s')
+        else:
+            parts.append(ch)
+        i += 1
+    return "".join(parts)
+
+class PostgresCursorWrapper:
+    def __init__(self, raw_cursor, conn):
+        self._cursor = raw_cursor
+        self._conn = conn
+        self._lastrowid = None
+
+    def execute(self, sql, params=None):
+        translated = translate_query_for_postgres(sql)
+        is_insert = translated.strip().upper().startswith("INSERT INTO") and "RETURNING" not in translated.upper()
+
+        if is_insert:
+            sql_with_returning = f"{translated.rstrip(';')} RETURNING id;"
+            try:
+                if params is None:
+                    res = self._cursor.execute(sql_with_returning)
+                else:
+                    res = self._cursor.execute(sql_with_returning, params)
+                row = self._cursor.fetchone()
+                if row:
+                    self._lastrowid = row[0]
+                return res
+            except Exception:
+                self._conn.rollback()
+                self._lastrowid = None
+                if params is None:
+                    return self._cursor.execute(translated)
+                else:
+                    return self._cursor.execute(translated, params)
+        else:
+            self._lastrowid = None
+            if params is None:
+                return self._cursor.execute(translated)
+            else:
+                return self._cursor.execute(translated, params)
+
+    def executemany(self, sql, seq_of_params):
+        translated = translate_query_for_postgres(sql)
+        return self._cursor.executemany(translated, seq_of_params)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def fetchmany(self, size=None):
+        if size is None:
+            return self._cursor.fetchmany()
+        return self._cursor.fetchmany(size)
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    @property
+    def description(self):
+        return self._cursor.description
+
+    def close(self):
+        return self._cursor.close()
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+class PostgresConnectionWrapper:
+    def __init__(self, raw_conn):
+        self._conn = raw_conn
+        self.row_factory = None
+
+    def cursor(self):
+        raw_cur = self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        return PostgresCursorWrapper(raw_cur, self._conn)
+
+    def execute(self, sql, params=None):
+        cur = self.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        return self._conn.close()
+
+    @property
+    def total_changes(self):
+        return 1
+
+# ----------------------------------------------------
+# UNIFIED DATABASE ACCESSOR
+# ----------------------------------------------------
+def get_db():
+    if is_postgres():
+        db_url = get_database_url()
+        if has_app_context() and g is not None:
+            db = getattr(g, 'db', None)
+            if db is not None:
+                try:
+                    if not db._conn.closed:
+                        return db
+                except Exception:
+                    db = None
+                    g.db = None
+            if db is None:
+                raw_conn = psycopg2.connect(db_url)
+                g.db = PostgresConnectionWrapper(raw_conn)
+            return g.db
+        else:
+            raw_conn = psycopg2.connect(db_url)
+            return PostgresConnectionWrapper(raw_conn)
+    else:
+        if has_app_context() and g is not None:
+            db = getattr(g, 'db', None)
+            if db is not None:
+                try:
+                    # Verify database connection is still open
+                    db.total_changes
+                except Exception:
+                    db = None
+                    g.db = None
+
+            if db is None:
+                conn = sqlite3.connect(DB_PATH, timeout=30.0)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON;")
+                conn.execute("PRAGMA busy_timeout = 30000;")
+                conn.execute("PRAGMA journal_mode = WAL;")
+                g.db = conn
+            return g.db
+        else:
             conn = sqlite3.connect(DB_PATH, timeout=30.0)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute("PRAGMA busy_timeout = 30000;")
             conn.execute("PRAGMA journal_mode = WAL;")
-            g.db = conn
-        return g.db
-    else:
-        conn = sqlite3.connect(DB_PATH, timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        return conn
+            return conn
 
 def init_db():
     conn = get_db()
