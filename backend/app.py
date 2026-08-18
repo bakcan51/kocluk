@@ -1795,53 +1795,85 @@ def handle_mock_exams():
             legacy_mocks = [dict(r) for r in cursor.fetchall()]
             attempts = legacy_mocks
 
-        # Enrich each attempt with test results (subject nets) & topic results
-        enriched_attempts = []
-        for att in attempts:
-            att_id = att['id']
-            # Test results (Subjects)
-            cursor.execute("""
+        # Enrich attempts with batch queries (O(1) bulk round trips instead of N+1)
+        test_results_by_attempt = {}
+        topic_results_by_attempt = {}
+        question_results_by_attempt = {}
+
+        if attempts:
+            attempt_ids = [att['id'] for att in attempts]
+            placeholders = ', '.join(['?'] * len(attempt_ids))
+
+            # 1. Bulk Subject Test Results
+            cursor.execute(f"""
             SELECT tr.*, s.name as subject_name
             FROM exam_test_results tr
             JOIN subjects s ON tr.subject_id = s.id
-            WHERE tr.exam_attempt_id = ?
-            ORDER BY s.sort_order ASC;
-            """, (att_id,))
-            test_res = [dict(r) for r in cursor.fetchall()]
+            WHERE tr.exam_attempt_id IN ({placeholders})
+            ORDER BY tr.exam_attempt_id, s.sort_order ASC;
+            """, tuple(attempt_ids))
+            for r in cursor.fetchall():
+                row_dict = dict(r)
+                att_id = row_dict['exam_attempt_id']
+                if att_id not in test_results_by_attempt:
+                    test_results_by_attempt[att_id] = []
+                test_results_by_attempt[att_id].append(row_dict)
 
-            # Legacy fallback if no test_res
-            if not test_res and 'title' in att:
-                cursor.execute("""
-                SELECT mr.*, s.name as subject_name
-                FROM mock_exam_results mr
-                JOIN subjects s ON mr.subject_id = s.id
-                WHERE mr.mock_exam_id = ?;
-                """, (att_id,))
-                test_res = [dict(r) for r in cursor.fetchall()]
-
-            # Topic results
-            cursor.execute("""
+            # 2. Bulk Topic Results
+            cursor.execute(f"""
             SELECT tr.*, s.name as subject_name, ct.name as topic_name
             FROM exam_topic_results tr
             JOIN subjects s ON tr.subject_id = s.id
             JOIN topics ct ON tr.curriculum_topic_id = ct.id
-            WHERE tr.exam_attempt_id = ?;
-            """, (att_id,))
-            topic_res = [dict(r) for r in cursor.fetchall()]
+            WHERE tr.exam_attempt_id IN ({placeholders})
+            ORDER BY tr.exam_attempt_id;
+            """, tuple(attempt_ids))
+            for r in cursor.fetchall():
+                row_dict = dict(r)
+                att_id = row_dict['exam_attempt_id']
+                if att_id not in topic_results_by_attempt:
+                    topic_results_by_attempt[att_id] = []
+                topic_results_by_attempt[att_id].append(row_dict)
 
-            # Question results / Error types
-            cursor.execute("""
+            # 3. Bulk Question Results
+            cursor.execute(f"""
             SELECT qr.*, s.name as subject_name, ct.name as topic_name
             FROM exam_question_results qr
             LEFT JOIN subjects s ON qr.subject_id = s.id
             LEFT JOIN topics ct ON qr.curriculum_topic_id = ct.id
-            WHERE qr.exam_attempt_id = ?;
-            """, (att_id,))
-            q_res = [dict(r) for r in cursor.fetchall()]
+            WHERE qr.exam_attempt_id IN ({placeholders})
+            ORDER BY qr.exam_attempt_id;
+            """, tuple(attempt_ids))
+            for r in cursor.fetchall():
+                row_dict = dict(r)
+                att_id = row_dict['exam_attempt_id']
+                if att_id not in question_results_by_attempt:
+                    question_results_by_attempt[att_id] = []
+                question_results_by_attempt[att_id].append(row_dict)
 
-            att['test_results'] = test_res
-            att['topic_results'] = topic_res
-            att['question_results'] = q_res
+            # 4. Legacy Mock Exams Fallback (if any attempt came from mock_exams and has no test_results)
+            legacy_ids = [att['id'] for att in attempts if 'title' in att and att['id'] not in test_results_by_attempt]
+            if legacy_ids:
+                leg_placeholders = ', '.join(['?'] * len(legacy_ids))
+                cursor.execute(f"""
+                SELECT mr.*, s.name as subject_name
+                FROM mock_exam_results mr
+                JOIN subjects s ON mr.subject_id = s.id
+                WHERE mr.mock_exam_id IN ({leg_placeholders});
+                """, tuple(legacy_ids))
+                for r in cursor.fetchall():
+                    row_dict = dict(r)
+                    att_id = row_dict['mock_exam_id']
+                    if att_id not in test_results_by_attempt:
+                        test_results_by_attempt[att_id] = []
+                    test_results_by_attempt[att_id].append(row_dict)
+
+        enriched_attempts = []
+        for att in attempts:
+            att_id = att['id']
+            att['test_results'] = test_results_by_attempt.get(att_id, [])
+            att['topic_results'] = topic_results_by_attempt.get(att_id, [])
+            att['question_results'] = question_results_by_attempt.get(att_id, [])
             enriched_attempts.append(att)
 
         # Compute Overall Summary & Time Window Averages
