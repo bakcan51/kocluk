@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YKS Koçluk & Akademik Performans Platformu</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-[#080D1A] text-[#F3F6FC] font-sans antialiased selection:bg-[#6F63D9] selection:text-white min-h-screen">
+
+    <!-- LOGIN SCREEN (SINGLE UNIFIED LOGIN - NO ROLE SELECTOR) -->
+    <div id="loginScreen" class="fixed inset-0 z-50 flex items-center justify-center bg-[#080D1A]/95 backdrop-blur-2xl p-4 overflow-y-auto py-8">
+        <div class="w-full max-w-md bg-[#111A2C] border border-[#24314A] rounded-3xl p-6 sm:p-8 shadow-2xl my-auto">
+            <div class="flex flex-col items-center text-center mb-8">
+                <div class="w-16 h-16 rounded-2xl bg-[#2563EB] flex items-center justify-center shadow-lg mb-4">
+                    <i data-lucide="graduation-cap" class="w-9 h-9 text-white"></i>
+                </div>
+                <h1 class="text-2xl font-bold text-white tracking-tight">YKS & LGS KOÇLUK PLATFORMU</h1>
+                <p class="text-xs text-[#A8B3C7] mt-1">Hoş Geldiniz — Giriş Yapın</p>
+            </div>
+
+            <form id="loginForm" onsubmit="handleLogin(event); return false;" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-[#A8B3C7] mb-1.5">Kullanıcı Adı</label>
+                    <input type="text" id="loginEmail" required onkeydown="if(event.key==='Enter'){handleLogin(event);}" class="w-full bg-[#0B1324] border border-[#2A3954] rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#2563EB] transition font-semibold" placeholder="Kullanıcı adınızı girin">
+                </div>
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="block text-xs font-medium text-[#A8B3C7]">Şifre</label>
+                        <a href="#" id="forgotPasswordLink" onclick="openForgotPasswordModal(event); return false;" class="text-xs text-[#2563EB] hover:text-blue-300 font-semibold transition">Şifremi Unuttum</a>
+                    </div>
+                    <input type="password" id="loginPassword" required onkeydown="if(event.key==='Enter'){handleLogin(event);}" class="w-full bg-[#0B1324] border border-[#2A3954] rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#2563EB] transition font-semibold" placeholder="Şifrenizi girin">
+                </div>
+                <button id="loginSubmitBtn" type="button" onclick="handleLogin(event); return false;" class="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-black py-3.5 rounded-xl shadow-lg transition duration-200 mt-2 uppercase tracking-wider text-xs flex items-center justify-center gap-2 cursor-pointer">
+                    <span>[ GİRİŞ YAP ]</span>
+                </button>
+            </form>
+
+            <div id="loginError" class="hidden mt-4 text-xs text-rose-400 text-center bg-rose-950/40 border border-rose-800/50 p-2.5 rounded-xl"></div>
+
+            <!-- TEST HESAPLARI QUICK FILL CONTAINER -->
+            <div id="demoCredentialsContainer" class="mt-6 pt-4 border-t border-[#24314A] text-xs text-[#A8B3C7] space-y-2">
+                <p class="font-bold text-slate-300 flex items-center justify-between mb-2">
+                    <span>🔑 GİRİŞ BİLGİLERİ (TEST HESAPLARI)</span>
+                </p>
+                
+                <div class="w-full flex justify-between items-center bg-[#0B1324] p-3 rounded-xl border border-[#2A3954] hover:border-[#2563EB] transition text-left group">
+                    <div>
+                        <span class="font-bold text-white block text-xs">👨‍🏫 KOÇ HESABI</span>
+                        <span class="text-[11px] text-[#2563EB] font-mono font-bold block mt-0.5">Kullanıcı Adı: ummu.akcan | Şifre: password123</span>
+                    </div>
+                    <button type="button" id="btnFillCoach" onclick="fillCredentials('COACH', 'password123', event); return false;" class="text-xs bg-[#172238] group-hover:bg-[#2563EB] text-[#2563EB] group-hover:text-white font-bold px-3 py-1.5 rounded-lg border border-[#2A3954] transition shrink-0 ml-2 cursor-pointer">Doldur ⚡</button>
+                </div>
+
+                <div class="w-full flex justify-between items-center bg-[#0B1324] p-3 rounded-xl border border-[#2A3954] hover:border-[#2563EB] transition text-left group">
+                    <div>
+                        <span class="font-bold text-white block text-xs">🎓 ÖĞRENCİ HESABI</span>
+                        <span class="text-[11px] text-[#2563EB] font-mono font-bold block mt-0.5">Kullanıcı Adı: burak.akcan | Şifre: ogrenci123</span>
+                    </div>
+                    <button type="button" id="btnFillStudent" onclick="fillCredentials('STUDENT', 'ogrenci123', event); return false;" class="text-xs bg-[#172238] group-hover:bg-[#2563EB] text-[#2563EB] group-hover:text-white font-bold px-3 py-1.5 rounded-lg border border-[#2A3954] transition shrink-0 ml-2 cursor-pointer">Doldur ⚡</button>
+                </div>
+
+                <div class="w-full flex justify-between items-center bg-[#0B1324] p-3 rounded-xl border border-[#2A3954] hover:border-[#2563EB] transition text-left group">
+                    <div>
+                        <span class="font-bold text-white block text-xs">👑 ADMİN HESABI</span>
+                        <span class="text-[11px] text-[#2563EB] font-mono font-bold block mt-0.5">Kullanıcı Adı: admin | Şifre: password123</span>
+                    </div>
+                    <button type="button" id="btnFillAdmin" onclick="fillCredentials('ADMIN', 'password123', event); return false;" class="text-xs bg-[#172238] group-hover:bg-[#2563EB] text-[#2563EB] group-hover:text-white font-bold px-3 py-1.5 rounded-lg border border-[#2A3954] transition shrink-0 ml-2 cursor-pointer">Doldur ⚡</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MOBILE SIDEBAR BACKDROP OVERLAY -->
+    <div id="mobileSidebarOverlay" onclick="toggleMobileSidebar()" class="fixed inset-0 bg-black/60 z-40 hidden md:hidden"></div>
+
+    <!-- MAIN APPLICATION WRAPPER -->
+    <div id="appContainer" class="hidden min-h-screen flex flex-col md:flex-row bg-[#080D1A]">
+
+        <!-- DESKTOP / MOBILE SIDEBAR -->
+        <aside id="mainSidebar" class="hidden md:flex flex-col w-64 border-r border-[#24314A] bg-[#0B1220] p-4 sticky top-0 h-screen z-30 shrink-0">
+            <!-- Brand -->
+            <div class="flex items-center gap-3 px-3 py-4 mb-4 border-b border-[#24314A]">
+                <div class="w-10 h-10 rounded-xl bg-[#4F8CFF] flex items-center justify-center shadow-md">
+                    <i data-lucide="graduation-cap" class="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                    <h2 class="font-bold text-sm text-white leading-tight">YKS KOÇLUK</h2>
+                    <span id="userRoleBadge" class="text-[10px] uppercase font-bold tracking-wider text-[#4F8CFF] bg-[#172238] border border-[#2A3954] px-2 py-0.5 rounded-full">KOÇ</span>
+                </div>
+            </div>
+
+            <!-- Nav Links -->
+            <nav id="sidebarNavLinks" class="flex-1 space-y-1 overflow-y-auto pr-1">
+                <button onclick="navigateView('dashboard')" class="nav-item active w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5 shrink-0 text-[#4F8CFF]"></i> <span class="text-left flex-1 leading-snug">Dashboard</span>
+                </button>
+                <button onclick="toggleTheme()" class="nav-item w-full flex items-center justify-between text-left px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition" title="Koyu / Açık Tema Değiştir">
+                    <div class="flex items-center justify-start text-left gap-3 flex-1 min-w-0">
+                        <span id="sidebarThemeIcon" class="text-base shrink-0">☀️</span> <span id="sidebarThemeText" class="text-left flex-1 leading-snug truncate">Açık Tema</span>
+                    </div>
+                </button>
+                <button onclick="navigateView('notifications')" class="nav-item w-full flex items-center justify-between text-left px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <div class="flex items-center justify-start text-left gap-3 flex-1 min-w-0">
+                        <i data-lucide="bell" class="w-5 h-5 shrink-0 text-amber-400"></i> <span class="text-left flex-1 leading-snug truncate">Bildirimler</span>
+                    </div>
+                    <span id="sidebarNotifBadge" class="hidden bg-amber-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full shadow-sm shrink-0">0</span>
+                </button>
+                <button onclick="navigateView('students')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="users" class="w-5 h-5 shrink-0 text-[#4F8CFF]"></i> <span class="text-left flex-1 leading-snug">Öğrencilerim & Risk</span>
+                </button>
+                <button onclick="navigateView('program')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="calendar" class="w-5 h-5 shrink-0 text-[#38BDF8]"></i> <span class="text-left flex-1 leading-snug">Haftalık Program</span>
+                </button>
+                <button onclick="navigateView('mufredat')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="target" class="w-5 h-5 shrink-0 text-[#22C55E]"></i> <span class="text-left flex-1 leading-snug">Müfredat & Kaynak Takibi</span>
+                </button>
+                <button onclick="navigateView('kaynak-havuzu')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="library" class="w-5 h-5 shrink-0 text-[#4F8CFF]"></i> <span class="text-left flex-1 leading-snug">📚 Kaynak Havuzum</span>
+                </button>
+                <button onclick="navigateView('deneme')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="bar-chart-3" class="w-5 h-5 shrink-0 text-[#4F8CFF]"></i> <span class="text-left flex-1 leading-snug">Deneme & Konu Analizi</span>
+                </button>
+                <button onclick="navigateView('simulator')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="calculator" class="w-5 h-5 shrink-0 text-[#38BDF8]"></i> <span class="text-left flex-1 leading-snug">YKS Puan Simülatörü</span>
+                </button>
+                <button onclick="navigateView('books')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="book-marked" class="w-5 h-5 shrink-0 text-[#4F8CFF]"></i> <span class="text-left flex-1 leading-snug">Kitap Okuma Takibi</span>
+                </button>
+                <button onclick="navigateView('messages')" class="nav-item w-full flex items-center justify-between text-left px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <div class="flex items-center justify-start text-left gap-3 flex-1 min-w-0">
+                        <i data-lucide="message-square" class="w-5 h-5 shrink-0 text-[#38BDF8]"></i> <span class="text-left flex-1 leading-snug truncate">Mesajlaşma</span>
+                    </div>
+                    <span id="sidebarUnreadBadge" class="hidden bg-rose-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full shadow-sm shrink-0">0</span>
+                </button>
+                <button onclick="navigateView('timer')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="timer" class="w-5 h-5 shrink-0 text-[#F59E0B]"></i> <span class="text-left flex-1 leading-snug">Çalışma Zamanlayıcısı</span>
+                </button>
+                <button onclick="navigateView('ai-coach')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
+                    <i data-lucide="sparkles" class="w-5 h-5 shrink-0 text-[#7C6AE6]"></i> <span class="text-left flex-1 leading-snug">AI Koç Asistanı</span>
+                </button>
+            </nav>
+
+            <!-- User Footer -->
+            <div class="pt-4 border-t border-slate-800/80 mt-auto">
+                <div class="flex items-center justify-between px-2">
+                    <div class="truncate">
+                        <p id="userNameLabel" class="text-xs font-semibold text-white truncate">Kullanıcı</p>
+                        <p id="userEmailLabel" class="text-[10px] text-slate-400 truncate"></p>
+                    </div>
+                    <button onclick="logout()" title="Çıkış Yap" class="bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                        <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Çıkış
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- CONTENT AREA -->
+        <main class="flex-1 flex flex-col min-w-0 pb-20 md:pb-6">
+            <!-- TOP NAVBAR -->
+            <header class="flex items-center justify-between px-6 py-4 border-b border-slate-800/60 bg-slate-900/40 backdrop-blur-xl sticky top-0 z-20">
+                <div class="flex items-center gap-3">
+                    <button onclick="toggleMobileSidebar()" class="md:hidden flex items-center justify-center p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+                        <i data-lucide="menu" class="w-5 h-5"></i>
+                    </button>
+                    <h1 id="pageTitle" class="text-lg font-bold text-white tracking-tight">Dashboard</h1>
+                </div>
+                <div class="flex items-center gap-3 relative">
+                    <!-- THEME TOGGLE BUTTON -->
+                    <button id="themeToggleBtn" onclick="toggleTheme()" class="px-3 py-2 rounded-xl text-slate-300 hover:text-white bg-[#172238] border border-[#2A3954] hover:border-[#4F8CFF] transition flex items-center gap-1.5 text-xs font-bold" title="Temayı Değiştir (Koyu / Açık)">
+                        <span id="themeIcon">☀️</span> <span id="themeText" class="hidden sm:inline">Açık Tema</span>
+                    </button>
+
+                    <!-- NOTIFICATION BELL ICON & DROPDOWN -->
+                    <div class="relative">
+                        <button id="notifBellBtn" onclick="toggleNotificationDropdown()" class="p-2 rounded-xl text-slate-300 hover:text-white bg-[#172238] border border-[#2A3954] hover:border-[#4F8CFF] transition relative" title="Bildirimler">
+                            <i data-lucide="bell" class="w-5 h-5"></i>
+                            <span id="navUnreadBadge" class="hidden absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full border border-[#0B1324] shadow-md animate-pulse">0</span>
+                        </button>
+
+                        <!-- DROPDOWN PANEL -->
+                        <div id="notifDropdownPanel" class="hidden absolute right-0 mt-2 w-[calc(100vw-24px)] max-w-xs sm:w-96 glass-card border border-[#24314A] bg-[#111A2C] rounded-2xl shadow-2xl z-50 overflow-hidden">
+                            <div class="p-3 border-b border-[#24314A] flex items-center justify-between bg-[#0B1324]">
+                                <h4 class="text-xs font-bold text-white flex items-center gap-2">
+                                    <i data-lucide="bell" class="w-4 h-4 text-amber-400"></i> Bildirimler
+                                </h4>
+                                <button onclick="markAllNotificationsAsRead()" class="text-[10px] font-bold text-[#4F8CFF] hover:underline">Tümünü Okundu Yap</button>
+                            </div>
+                            <div id="notifDropdownList" class="max-h-80 overflow-y-auto divide-y divide-[#24314A] text-xs">
+                                <div class="p-6 text-center text-slate-400 text-xs">Bildirimler yükleniyor...</div>
+                            </div>
+                            <div class="p-2 border-t border-[#24314A] bg-[#0B1324] text-center">
+                                <button onclick="navigateView('notifications'); toggleNotificationDropdown(false);" class="text-xs font-bold text-white hover:text-[#4F8CFF] transition block w-full py-1">
+                                    Tüm Bildirimleri Gör →
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prominent Logout Button -->
+                    <button onclick="logout()" class="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-2.5 sm:px-3.5 py-2 rounded-xl shadow transition shrink-0" title="Çıkış Yap">
+                        <i data-lucide="log-out" class="w-4 h-4"></i> <span class="hidden sm:inline">🚪 Çıkış</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- DYNAMIC VIEWS -->
+            <div id="viewContainer" class="p-3.5 sm:p-6 space-y-6 flex-1 overflow-y-auto pb-24 md:pb-6">
+                <!-- Views loaded dynamically via app.js -->
+            </div>
+        </main>
+
+        <!-- MOBILE BOTTOM NAVIGATION -->
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-2xl border-t border-slate-800 flex justify-around py-2.5 px-1">
+            <button onclick="navigateView('dashboard')" class="flex flex-col items-center text-[10px] font-semibold text-indigo-400">
+                <i data-lucide="layout-dashboard" class="w-5 h-5 mb-0.5"></i> Panel
+            </button>
+            <button onclick="navigateView('program')" class="flex flex-col items-center text-[10px] font-semibold text-slate-400 hover:text-white">
+                <i data-lucide="calendar" class="w-5 h-5 mb-0.5"></i> Program
+            </button>
+            <button onclick="navigateView('resources')" class="flex flex-col items-center text-[10px] font-semibold text-slate-400 hover:text-white">
+                <i data-lucide="book-open" class="w-5 h-5 mb-0.5"></i> Kaynaklar
+            </button>
+            <button onclick="navigateView('deneme')" class="flex flex-col items-center text-[10px] font-semibold text-slate-400 hover:text-white">
+                <i data-lucide="bar-chart-3" class="w-5 h-5 mb-0.5"></i> Deneme
+            </button>
+            <button onclick="logout()" class="flex flex-col items-center text-[10px] font-bold text-rose-400 hover:text-rose-300">
+                <i data-lucide="log-out" class="w-5 h-5 mb-0.5 text-rose-400"></i> Çıkış
+            </button>
+        </nav>
+
+    </div>
+
+    <!-- MODAL DIALOGS CONTAINER -->
+    <div id="modalContainer" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 modal-overlay overflow-y-auto">
+        <div id="modalContent" class="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto my-auto">
+            <!-- Modal Body injected dynamically -->
+        </div>
+    </div>
+
+    <!-- Application Script -->
+    <script src="app.js?v=20260816_9999"></script>
+</body>
+</html>

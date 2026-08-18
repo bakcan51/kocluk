@@ -27,11 +27,23 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-from database import get_db, DB_PATH
+from database import get_db, DB_PATH, init_db, ensure_lgs_seeded
 
-app = Flask(__name__, static_folder="../frontend", static_url_path="")
+frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend'))
+if not os.path.exists(frontend_dir):
+    frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'frontend'))
+if not os.path.exists(frontend_dir):
+    frontend_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+
+app = Flask(__name__, static_folder=frontend_dir, static_url_path="")
 app.secret_key = "yks_kocluk_super_secret_key_2027"
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+try:
+    init_db()
+    ensure_lgs_seeded()
+except Exception as _e:
+    pass
 
 @app.route('/uploads/<path:filename>')
 def serve_uploaded_file(filename):
@@ -215,6 +227,15 @@ def add_cors_headers(response):
 # Serve static frontend files
 @app.route('/')
 def serve_index():
+    return app.send_static_file('index.html')
+
+@app.route('/<path:path>')
+def serve_static_fallback(path):
+    if path.startswith('api/'):
+        return jsonify({"error": "Endpoint not found"}), 404
+    static_file_path = os.path.join(app.static_folder, path)
+    if os.path.isfile(static_file_path):
+        return app.send_static_file(path)
     return app.send_static_file('index.html')
 
 # Helper: Net calculation formula (Doğru - Yanlış / 4 for YKS, / 3 for LGS)
