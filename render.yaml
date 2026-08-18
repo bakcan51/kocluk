@@ -7,9 +7,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.12
-      - key: DATABASE_PATH
-        value: /var/data/yks_platform.db
-    disk:
-      name: yks-data
-      mountPath: /var/data
-      sizeGB: 1
+      - key: DATABASE_URL
+        sync: false
