@@ -139,7 +139,7 @@ class PostgresCursorWrapper:
         is_insert = translated.strip().upper().startswith("INSERT INTO") and "RETURNING" not in translated.upper()
 
         if is_insert:
-            sql_with_returning = f"{translated.rstrip(';')} RETURNING id;"
+            sql_with_returning = f"{translated.rstrip().rstrip(';')} RETURNING id;"
             try:
                 if params is None:
                     res = self._cursor.execute(sql_with_returning)

@@ -283,18 +283,19 @@ def calc_net(correct, incorrect, exam_system='YKS'):
 # Activity Logging Helper
 def log_activity(user_id, role, action, entity_type=None, entity_id=None, metadata=None, cursor=None):
     try:
+        meta_str = json.dumps(metadata, ensure_ascii=False, default=str) if metadata else None
         if cursor:
             cursor.execute("""
             INSERT INTO activity_logs (user_id, role, action, entity_type, entity_id, metadata_json)
             VALUES (?, ?, ?, ?, ?, ?);
-            """, (user_id, role, action, entity_type, entity_id, json.dumps(metadata, ensure_ascii=False) if metadata else None))
+            """, (user_id, role, action, entity_type, entity_id, meta_str))
         else:
             conn = get_db()
             cur = conn.cursor()
             cur.execute("""
             INSERT INTO activity_logs (user_id, role, action, entity_type, entity_id, metadata_json)
             VALUES (?, ?, ?, ?, ?, ?);
-            """, (user_id, role, action, entity_type, entity_id, json.dumps(metadata, ensure_ascii=False) if metadata else None))
+            """, (user_id, role, action, entity_type, entity_id, meta_str))
             conn.commit()
     except Exception as e:
         print(f"Error logging activity: {e}")

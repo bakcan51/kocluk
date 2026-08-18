@@ -9042,8 +9042,8 @@ async function renderWeeklyProgramView(studentId = null) {
                     </div>
                 </div>
                 ${!isStudentRole ? `
-                <button onclick="openSimpleCellModal(${weeklyActiveStudentId}, '${weekDates[0].date}', '${weekDates[0].dayName}', '08:00', '09:00')" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg transition whitespace-nowrap flex items-center gap-1.5">
-                    ➕ Program Oluştur / Görev Ekle
+                <button onclick="activateInlineCellEdit('${weekDates[0].date}_08_00')" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg transition whitespace-nowrap flex items-center gap-1.5">
+                    ➕ İlk Görevi Yazmaya Başla
                 </button>
                 ` : ''}
             </div>
@@ -9054,34 +9054,34 @@ async function renderWeeklyProgramView(studentId = null) {
                 <div class="glass-card p-3 border border-slate-800 bg-slate-900/80 flex items-center justify-between">
                     <div>
                         <span class="text-[10px] text-slate-400 font-bold block uppercase">Toplam Görev</span>
-                        <span class="text-base font-black text-indigo-400">${totTasks}</span>
+                        <span id="wp_kpi_total" class="text-base font-black text-indigo-400">${totTasks}</span>
                     </div>
                     <div class="w-8 h-8 rounded-xl bg-indigo-950 text-indigo-400 border border-indigo-800 flex items-center justify-center font-bold">📋</div>
                 </div>
                 <div class="glass-card p-3 border border-slate-800 bg-slate-900/80 flex items-center justify-between">
                     <div>
                         <span class="text-[10px] text-slate-400 font-bold block uppercase">Tamamlanan</span>
-                        <span class="text-base font-black text-emerald-400">${compTasks}</span>
+                        <span id="wp_kpi_completed" class="text-base font-black text-emerald-400">${compTasks}</span>
                     </div>
                     <div class="w-8 h-8 rounded-xl bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center justify-center font-bold">🟢</div>
                 </div>
                 <div class="glass-card p-3 border border-slate-800 bg-slate-900/80 flex items-center justify-between">
                     <div>
                         <span class="text-[10px] text-slate-400 font-bold block uppercase">Bekleyen</span>
-                        <span class="text-base font-black text-amber-400">${pendTasks}</span>
+                        <span id="wp_kpi_pending" class="text-base font-black text-amber-400">${pendTasks}</span>
                     </div>
                     <div class="w-8 h-8 rounded-xl bg-amber-950 text-amber-400 border border-amber-800 flex items-center justify-center font-bold">🟡</div>
                 </div>
                 <div class="glass-card p-3 border border-slate-800 bg-slate-900/80 flex items-center justify-between">
                     <div>
                         <span class="text-[10px] text-slate-400 font-bold block uppercase">Tamamlama %</span>
-                        <span class="text-base font-black text-purple-400">%${compRate}</span>
+                        <span id="wp_kpi_rate" class="text-base font-black text-purple-400">%${compRate}</span>
                     </div>
                     <div class="w-8 h-8 rounded-xl bg-purple-950 text-purple-400 border border-purple-800 flex items-center justify-center font-bold">📊</div>
                 </div>
             </div>
 
-            <!-- WEEKLY GRID TABLE -->
+            <!-- WEEKLY GRID TABLE (DIRECT IN-CELL EDITING) -->
             <div class="glass-card border border-slate-800 overflow-hidden shadow-2xl relative">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs min-w-[900px]">
@@ -9110,32 +9110,17 @@ async function renderWeeklyProgramView(studentId = null) {
                                     </td>
                                     ${weekDates.map((wd) => {
                                         const key = `${wd.date}_${slot.start}`;
+                                        const cellDomId = `${wd.date}_${slot.start.replace(':', '_')}`;
                                         const item = programMap[key];
-                                        const isComp = item && (item.status === 'TAMAMLANDI' || item.completion_status === 'TAMAMLANDI');
 
                                         return `
-                                        <td class="p-1.5 border-r border-slate-800/60 align-top h-20 hover:bg-slate-800/30 transition">
-                                            <div onclick="openSimpleCellModal(${weeklyActiveStudentId}, '${wd.date}', '${wd.dayName}', '${slot.start}', '${slot.end}', ${item ? item.id : 'null'})"
-                                                 class="h-full rounded-xl p-2 flex flex-col justify-between cursor-pointer transition border text-[11px] ${
-                                                    item 
-                                                        ? isComp 
-                                                            ? 'bg-emerald-950/50 border-emerald-700/80 text-emerald-200 shadow-sm' 
-                                                            : 'bg-slate-900/90 border-slate-700 text-white hover:border-indigo-500 shadow-sm' 
-                                                        : 'border-dashed border-slate-800/80 text-slate-600 hover:text-indigo-300 hover:border-indigo-500/50 flex items-center justify-center'
-                                                 }">
-                                                ${item ? `
-                                                    <div class="font-extrabold line-clamp-2 leading-snug">
-                                                        ${isComp ? '✓ ' : ''}${escapeHtml(item.title)}
-                                                    </div>
-                                                    <div class="flex items-center justify-between text-[9px] font-bold mt-1 pt-1 border-t border-slate-800/80">
-                                                        <span class="${isComp ? 'text-emerald-300' : 'text-slate-400'}">
-                                                            ${isComp ? '✓ Tamamlandı' : '○ Bekliyor'}
-                                                        </span>
-                                                    </div>
-                                                ` : `
-                                                    <span class="text-[10px] font-medium">+ Ders / Görev...</span>
-                                                `}
-                                            </div>
+                                        <td id="wp_td_${cellDomId}" 
+                                            class="p-1 border-r border-slate-800/60 align-top h-20 min-h-[85px] w-[130px] max-w-[150px] relative transition"
+                                            data-date="${wd.date}" 
+                                            data-day="${wd.dayName}" 
+                                            data-start="${slot.start}" 
+                                            data-end="${slot.end}">
+                                            ${renderSingleCellHtml(cellDomId, wd.date, wd.dayName, slot.start, slot.end, item, isStudentRole)}
                                         </td>
                                         `;
                                     }).join('')}
@@ -9167,7 +9152,6 @@ async function renderWeeklyProgramView(studentId = null) {
             console.warn("[WEEKLY PROGRAM] Suppressing error UI for outdated request sequence:", currentSeq);
             return;
         }
-        // STATE 4: PROGRAM_ERROR (Console detailed error logging + User-friendly Retry UI)
         console.error("[PROGRAM LOAD ERROR]", {
             studentId: weeklyActiveStudentId,
             weekStart: weeklyCurrentWeekStart,
@@ -9196,111 +9180,174 @@ async function renderWeeklyProgramView(studentId = null) {
     }
 }
 
-// Minimalist Cell Click Modal for Coach & Student
-async function openSimpleCellModal(studentId, progDate, dayName, startTime, endTime, progId = null) {
-    const isStudent = currentUser && currentUser.role === 'STUDENT';
-    const items = weeklyProgramState.items || [];
-    const item = progId ? items.find(i => i.id == progId) : null;
-    const taskTitle = item ? (item.title || '') : '';
-    const isCompleted = item && (item.status === 'TAMAMLANDI' || item.completion_status === 'TAMAMLANDI');
-
-    if (isStudent) {
-        if (!item) return; // Student cannot add empty cell
-        const html = `
-        <div class="space-y-4 text-xs p-1">
-            <div class="flex items-center justify-between pb-2 border-b border-slate-800">
-                <h3 class="text-sm font-black text-white flex items-center gap-2">
-                    <span>📅</span> HAFTALIK DERS GÖREVİ
-                </h3>
+// ----------------------------------------------------
+// DIRECT IN-CELL RENDERING & OPTIMISTIC EDITING
+// ----------------------------------------------------
+function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, isStudentRole) {
+    if (item && item.title) {
+        const isComp = (item.status === 'TAMAMLANDI' || item.completion_status === 'TAMAMLANDI');
+        return `
+        <div id="cell_view_${cellDomId}" 
+             onclick="${isStudentRole ? `toggleStudentInlineTask('${cellDomId}', ${item.id}, ${!isComp})` : `activateInlineCellEdit('${cellDomId}')`}"
+             class="h-full min-h-[75px] rounded-xl p-2 flex flex-col justify-between cursor-pointer transition border text-[11px] group select-none ${
+                 isComp 
+                     ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-200 shadow-sm' 
+                     : 'bg-slate-900/90 border-slate-700/80 text-white hover:border-indigo-500 shadow-sm'
+             }">
+            <div class="font-bold leading-snug line-clamp-3 whitespace-pre-wrap break-words text-[11px]">
+                ${isComp ? '<span class="text-emerald-400 font-black mr-1">✓</span>' : ''}${escapeHtml(item.title)}
             </div>
-
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-                <div class="flex items-center justify-between text-[11px] text-slate-400 font-semibold">
-                    <span>⏱️ ${dayName} ${startTime} - ${endTime}</span>
-                    <span class="px-2.5 py-0.5 rounded-full font-black text-[10px] ${isCompleted ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-amber-950 text-amber-300 border border-amber-800'}">
-                        ${isCompleted ? '✓ TAMAMLANDI' : '○ BEKLİYOR'}
-                    </span>
-                </div>
-                <div class="text-base font-black text-white leading-relaxed">
-                    ${escapeHtml(taskTitle)}
-                </div>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-end gap-2.5 pt-2">
-                <button onclick="closeModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold hover:bg-slate-700">Kapat</button>
-                <button onclick="toggleStudentTaskCompletion(${item.id}, ${!isCompleted})" class="px-5 py-2 rounded-xl font-black text-white shadow-lg transition flex items-center gap-2 ${isCompleted ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'}">
-                    ${isCompleted ? '↩️ Bekliyor Olarak İşaretle' : '✓ Tamamlandı Olarak İşaretle'}
-                </button>
+            <div class="flex items-center justify-between text-[9px] font-bold mt-1 pt-1 border-t border-slate-800/80">
+                <span class="${isComp ? 'text-emerald-400 font-extrabold' : 'text-slate-400'}">
+                    ${isComp ? '✓ Tamamlandı' : '○ Bekliyor'}
+                </span>
+                ${!isStudentRole ? `
+                <span class="text-[9px] text-slate-500 opacity-0 group-hover:opacity-100 transition">✏️</span>
+                ` : `
+                <span class="text-[8px] px-1 py-0.2 rounded ${isComp ? 'bg-amber-950 text-amber-300' : 'bg-emerald-950 text-emerald-300'} font-bold">
+                    ${isComp ? 'Geri Al' : 'Tamamla'}
+                </span>
+                `}
             </div>
         </div>
         `;
-        openModal(html);
-        return;
+    } else {
+        return `
+        <div id="cell_view_${cellDomId}" 
+             ${!isStudentRole ? `onclick="activateInlineCellEdit('${cellDomId}')"` : ''}
+             class="h-full min-h-[75px] rounded-xl p-2 flex items-center justify-center cursor-pointer transition border border-dashed border-slate-800/80 text-slate-600 hover:text-indigo-300 hover:border-indigo-500/60 text-[11px] select-none hover:bg-slate-800/20">
+            <span class="text-[10px] font-medium">${!isStudentRole ? '+ Ders / Görev...' : 'Boş'}</span>
+        </div>
+        `;
     }
+}
 
-    // Coach / Admin Minimal Input Modal
-    const isEditing = !!item;
-    const html = `
-    <div class="space-y-4 text-xs p-1">
-        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
-            <h3 class="text-sm font-black text-white flex items-center gap-2">
-                <span>${isEditing ? '✏️' : '➕'}</span> ${isEditing ? 'GÖREVİ DÜZENLE' : 'YENİ GÖREV EKLE'}
-            </h3>
-        </div>
+// DIRECT IN-CELL EDIT ACTIVATION
+function activateInlineCellEdit(cellDomId) {
+    const td = document.getElementById(`wp_td_${cellDomId}`);
+    if (!td) return;
 
-        <div class="text-slate-300 font-bold bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
-            <span>⏱️ <strong>${dayName}</strong> | <strong>${startTime} - ${endTime}</strong></span>
-            <span class="text-slate-400 text-[10px] font-medium">${progDate}</span>
-        </div>
+    const progDate = td.dataset.date;
+    const startTime = td.dataset.start;
+    const items = weeklyProgramState.items || [];
+    const item = items.find(i => i && i.date === progDate && i.start_time === startTime);
+    const existingTitle = item ? (item.title || '') : '';
 
-        <div class="space-y-2">
-            <label class="block text-slate-300 font-bold">DERS / GÖREV AÇIKLAMASI</label>
-            <input type="text" id="simpleWpTaskTitle" value="${escapeHtml(taskTitle)}" placeholder="Örn: TYT Matematik - Problemler 40 soru" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-3 text-white font-bold text-sm focus:outline-none focus:border-indigo-500">
-        </div>
-
-        <div class="flex items-center justify-between gap-3 pt-3 border-t border-slate-800">
-            ${isEditing ? `
-                <button onclick="executeDeleteCellItem(${item.id})" class="px-4 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 font-bold border border-rose-800 transition">
-                    🗑️ Temizle / Sil
+    td.innerHTML = `
+    <div id="cell_edit_${cellDomId}" class="h-full min-h-[95px] rounded-xl p-1.5 bg-slate-950 border-2 border-indigo-500 shadow-2xl flex flex-col justify-between z-20 relative">
+        <textarea id="cell_input_${cellDomId}" 
+                  class="w-full bg-slate-900 border border-slate-700 rounded-lg p-1.5 text-white font-bold text-[11px] leading-tight focus:outline-none focus:border-indigo-400 resize-none h-14"
+                  placeholder="Ders, konu, 40 soru...">${escapeHtml(existingTitle)}</textarea>
+        <div class="flex items-center justify-between gap-1 mt-1 pt-1 border-t border-slate-800">
+            <div class="flex items-center gap-1">
+                <button type="button" onclick="saveInlineCell('${cellDomId}')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] px-2 py-0.5 rounded-md shadow transition flex items-center gap-0.5">
+                    💾 Kaydet
                 </button>
-            ` : '<div></div>'}
-
-            <div class="flex items-center gap-2">
-                <button onclick="closeModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold hover:bg-slate-700 transition">Vazgeç</button>
-                <button onclick="saveSimpleCellItem('${studentId}', '${progDate}', '${dayName}', '${startTime}', '${endTime}', ${isEditing ? item.id : 'null'})" class="px-6 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-black shadow-lg transition">
-                    💾 KAYDET
+                <button type="button" onclick="cancelInlineCell('${cellDomId}')" class="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] px-1.5 py-0.5 rounded-md transition">
+                    ✕
                 </button>
             </div>
+            ${item && item.id ? `
+            <button type="button" onclick="deleteInlineCell('${cellDomId}', ${item.id})" title="Görevi Sil" class="bg-rose-950 hover:bg-rose-900 text-rose-300 font-bold text-[10px] px-1.5 py-0.5 rounded-md border border-rose-800 transition">
+                🗑️
+            </button>
+            ` : ''}
         </div>
     </div>
     `;
-    openModal(html);
-    setTimeout(() => {
-        const inp = document.getElementById('simpleWpTaskTitle');
-        if (inp) inp.focus();
-    }, 100);
+
+    const ta = document.getElementById(`cell_input_${cellDomId}`);
+    if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+        ta.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                saveInlineCell(cellDomId);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelInlineCell(cellDomId);
+            }
+        });
+    }
 }
 
-async function saveSimpleCellItem(studentId, progDate, dayName, startTime, endTime, existingId) {
-    const inputEl = document.getElementById('simpleWpTaskTitle');
-    if (!inputEl) return;
-    const title = inputEl.value.trim();
-    if (!title) {
-        alert("Lütfen ders veya görev açıklaması yazın.");
+// CANCEL INLINE CELL EDIT
+function cancelInlineCell(cellDomId) {
+    const td = document.getElementById(`wp_td_${cellDomId}`);
+    if (!td) return;
+    const progDate = td.dataset.date;
+    const dayName = td.dataset.day;
+    const startTime = td.dataset.start;
+    const endTime = td.dataset.end;
+    const items = weeklyProgramState.items || [];
+    const item = items.find(i => i && i.date === progDate && i.start_time === startTime);
+    const isStudentRole = currentUser && currentUser.role === 'STUDENT';
+    td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, isStudentRole);
+}
+
+// DIRECT IN-CELL SAVE (OPTIMISTIC - NO PAGE RELOAD)
+async function saveInlineCell(cellDomId) {
+    const td = document.getElementById(`wp_td_${cellDomId}`);
+    if (!td) return;
+    const ta = document.getElementById(`cell_input_${cellDomId}`);
+    const newTitle = ta ? ta.value.trim() : '';
+
+    const progDate = td.dataset.date;
+    const dayName = td.dataset.day;
+    const startTime = td.dataset.start;
+    const endTime = td.dataset.end;
+    const studentId = weeklyActiveStudentId;
+    const token = localStorage.getItem('yks_token');
+    const isStudentRole = currentUser && currentUser.role === 'STUDENT';
+
+    let items = weeklyProgramState.items || [];
+    let existingItem = items.find(i => i && i.date === progDate && i.start_time === startTime);
+
+    if (!newTitle) {
+        if (existingItem && existingItem.id) {
+            await deleteInlineCell(cellDomId, existingItem.id);
+        } else {
+            cancelInlineCell(cellDomId);
+        }
         return;
     }
 
-    const token = localStorage.getItem('yks_token');
+    if (existingItem && existingItem.title === newTitle) {
+        cancelInlineCell(cellDomId);
+        return;
+    }
+
+    // OPTIMISTIC UPDATE
+    const prevTitle = existingItem ? existingItem.title : null;
+    let isNew = false;
+
+    if (existingItem) {
+        existingItem.title = newTitle;
+        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+    } else {
+        isNew = true;
+        existingItem = {
+            id: 'temp_' + Date.now(),
+            student_id: studentId,
+            date: progDate,
+            day_of_week: dayName,
+            start_time: startTime,
+            end_time: endTime,
+            title: newTitle,
+            status: 'PLANLANDI',
+            publication_status: 'PUBLISHED'
+        };
+        items.push(existingItem);
+        weeklyProgramState.items = items;
+        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+    }
+
+    updateWeeklyKpiBar();
+
+    // BACKGROUND API CALL
     try {
-        if (existingId) {
-            const res = await fetch(`${API_BASE}/weekly-program/${existingId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ title: title })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
-        } else {
+        if (isNew) {
             const res = await fetch(`${API_BASE}/weekly-program`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -9310,57 +9357,140 @@ async function saveSimpleCellItem(studentId, progDate, dayName, startTime, endTi
                     day_of_week: dayName,
                     start_time: startTime,
                     end_time: endTime,
-                    title: title,
+                    title: newTitle,
                     status: 'PLANLANDI',
                     publication_status: 'PUBLISHED'
                 })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Eklenemedi.');
+            if (data.id) {
+                existingItem.id = data.id;
+                td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+            }
+        } else {
+            const res = await fetch(`${API_BASE}/weekly-program/${existingItem.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ title: newTitle })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Güncellenemedi.');
         }
-
-        closeModal();
-        await renderWeeklyProgramView(weeklyActiveStudentId);
     } catch (err) {
-        alert("Hata: " + err.message);
+        console.error("Inline save error:", err);
+        alert("Değişiklik kaydedilemedi: " + err.message);
+        if (isNew) {
+            weeklyProgramState.items = weeklyProgramState.items.filter(i => i !== existingItem);
+            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, null, isStudentRole);
+        } else {
+            existingItem.title = prevTitle;
+            td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole);
+        }
+        updateWeeklyKpiBar();
     }
 }
 
-async function toggleStudentTaskCompletion(progId, markCompleted) {
+// DIRECT IN-CELL DELETE (OPTIMISTIC - NO PAGE RELOAD)
+async function deleteInlineCell(cellDomId, itemId) {
+    const td = document.getElementById(`wp_td_${cellDomId}`);
+    if (!td) return;
+    const progDate = td.dataset.date;
+    const dayName = td.dataset.day;
+    const startTime = td.dataset.start;
+    const endTime = td.dataset.end;
     const token = localStorage.getItem('yks_token');
+    const isStudentRole = currentUser && currentUser.role === 'STUDENT';
+
+    let items = weeklyProgramState.items || [];
+    const itemIndex = items.findIndex(i => i && (i.id === itemId || (i.date === progDate && i.start_time === startTime)));
+    const backupItem = itemIndex !== -1 ? items[itemIndex] : null;
+
+    if (itemIndex !== -1) {
+        items.splice(itemIndex, 1);
+        weeklyProgramState.items = items;
+    }
+
+    td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, null, isStudentRole);
+    updateWeeklyKpiBar();
+
+    if (!String(itemId).startsWith('temp_')) {
+        try {
+            const res = await fetch(`${API_BASE}/weekly-program/${itemId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Silinemedi.');
+        } catch (err) {
+            console.error("Delete error:", err);
+            alert("Görev silinemedi: " + err.message);
+            if (backupItem) {
+                weeklyProgramState.items.push(backupItem);
+                td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, backupItem, isStudentRole);
+                updateWeeklyKpiBar();
+            }
+        }
+    }
+}
+
+// DIRECT IN-CELL STUDENT COMPLETION TOGGLE (OPTIMISTIC - NO PAGE RELOAD)
+async function toggleStudentInlineTask(cellDomId, itemId, markCompleted) {
+    const td = document.getElementById(`wp_td_${cellDomId}`);
+    if (!td) return;
+    const progDate = td.dataset.date;
+    const dayName = td.dataset.day;
+    const startTime = td.dataset.start;
+    const endTime = td.dataset.end;
+    const token = localStorage.getItem('yks_token');
+
+    let items = weeklyProgramState.items || [];
+    const item = items.find(i => i && (i.id === itemId || (i.date === progDate && i.start_time === startTime)));
+    if (!item) return;
+
+    const prevStatus = item.status;
     const newStatus = markCompleted ? 'TAMAMLANDI' : 'PLANLANDI';
+    item.status = newStatus;
+    item.completion_status = newStatus;
+
+    td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, true);
+    updateWeeklyKpiBar();
+
     try {
-        const res = await fetch(`${API_BASE}/weekly-program/${progId}/status`, {
+        const res = await fetch(`${API_BASE}/weekly-program/${itemId}/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify({ status: newStatus })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Durum güncellenemedi.');
-
-        closeModal();
-        await renderWeeklyProgramView(weeklyActiveStudentId);
     } catch (err) {
-        alert("Hata: " + err.message);
+        console.error("Status toggle error:", err);
+        alert("Durum güncellenemedi: " + err.message);
+        item.status = prevStatus;
+        item.completion_status = prevStatus;
+        td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, true);
+        updateWeeklyKpiBar();
     }
 }
 
-async function executeDeleteCellItem(progId) {
-    const token = localStorage.getItem('yks_token');
-    try {
-        const res = await fetch(`${API_BASE}/weekly-program/${progId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok) {
-            const data = await res.json();
-            throw new Error(data.error || 'Silinemedi.');
-        }
-        closeModal();
-        await renderWeeklyProgramView(weeklyActiveStudentId);
-    } catch (err) {
-        alert("Hata: " + err.message);
-    }
+// DYNAMIC IN-PLACE KPI UPDATE (NO RE-RENDER)
+function updateWeeklyKpiBar() {
+    const items = weeklyProgramState.items || [];
+    const totTasks = items.length;
+    const compTasks = items.filter(i => i && (i.status === 'TAMAMLANDI' || i.completion_status === 'TAMAMLANDI')).length;
+    const pendTasks = totTasks - compTasks;
+    const compRate = totTasks > 0 ? Math.round((compTasks / totTasks) * 100) : 0;
+
+    const elTot = document.getElementById('wp_kpi_total');
+    const elComp = document.getElementById('wp_kpi_completed');
+    const elPend = document.getElementById('wp_kpi_pending');
+    const elRate = document.getElementById('wp_kpi_rate');
+
+    if (elTot) elTot.textContent = totTasks;
+    if (elComp) elComp.textContent = compTasks;
+    if (elPend) elPend.textContent = pendTasks;
+    if (elRate) elRate.textContent = `%${compRate}`;
 }
 
 async function publishWeeklyProgramToServer() {
