@@ -6158,15 +6158,11 @@ async function renderCoachDashboard() {
     const token = localStorage.getItem('yks_token');
     
     try {
-        const res = await fetch(`${API_BASE}/koc/dashboard`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        
-        const resRel = await fetch(`${API_BASE}/rel/students`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const dataRel = await resRel.json();
+        const [res, resRel] = await Promise.all([
+            fetch(`${API_BASE}/koc/dashboard`, { headers: { 'Authorization': `Bearer ${token}` } }),
+            fetch(`${API_BASE}/rel/students`, { headers: { 'Authorization': `Bearer ${token}` } })
+        ]);
+        const [data, dataRel] = await Promise.all([res.json(), resRel.json()]);
         const connectedStudents = dataRel.students || [];
         const pendingRequests = dataRel.pending_requests || [];
 
@@ -6301,18 +6297,14 @@ async function renderStudentDashboard() {
     const token = localStorage.getItem('yks_token');
 
     try {
-        const res = await fetch(`${API_BASE}/student/dashboard`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        const [res, resCo] = await Promise.all([
+            fetch(`${API_BASE}/student/dashboard`, { headers: { 'Authorization': `Bearer ${token}` } }),
+            fetch(`${API_BASE}/rel/my-coaches`, { headers: { 'Authorization': `Bearer ${token}` } })
+        ]);
+        const [data, dataCo] = await Promise.all([res.json(), resCo.json()]);
         const st = data.student || {};
         const q_today = data.q_today || {};
         const pending = data.pending_assignments || [];
-
-        const resCo = await fetch(`${API_BASE}/rel/my-coaches?student_id=${st.id || 1}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const dataCo = await resCo.json();
         const myCoaches = dataCo.coaches || [];
 
         let html = `
@@ -10542,17 +10534,16 @@ async function renderMufredatView(targetStudentId = null) {
 async function openAssignResourceToTopicModal(studentId, curriculumId, subjectName, topicName) {
     const token = localStorage.getItem('yks_token');
     try {
-        const res = await fetch(`${API_BASE}/kaynaklar/havuz?subject=${encodeURIComponent(subjectName)}&student_id=${studentId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        const [res, mufRes] = await Promise.all([
+            fetch(`${API_BASE}/kaynaklar/havuz?subject=${encodeURIComponent(subjectName)}&student_id=${studentId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            }),
+            fetch(`${API_BASE}/mufredat?student_id=${studentId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+        ]);
+        const [data, mufData] = await Promise.all([res.json(), mufRes.json()]);
         const resources = data.resources || [];
-
-        // Fetch currently assigned active resources for this student & curriculum_id
-        const mufRes = await fetch(`${API_BASE}/mufredat?student_id=${studentId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const mufData = await mufRes.json();
         let assignedResourceIds = new Set();
         (mufData.exams || []).forEach(e => {
             (e.subjects || []).forEach(s => {

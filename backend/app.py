@@ -112,6 +112,17 @@ def close_db_connection(exception=None):
         except Exception:
             pass
 
+@app.before_request
+def start_perf_timer():
+    g.start_time = time.time()
+
+@app.after_request
+def log_perf_timing(response):
+    if hasattr(g, 'start_time'):
+        duration_ms = round((time.time() - g.start_time) * 1000, 1)
+        print(f"[PERF] {request.method} {request.path} {response.status_code} {duration_ms}ms")
+    return response
+
 DAY_NAME_MAP = {
     1: 'Pazartesi', 2: 'Salı', 3: 'Çarşamba', 4: 'Perşembe', 5: 'Cuma', 6: 'Cumartesi', 7: 'Pazar',
     'Pazartesi': 1, 'Salı': 2, 'Çarşamba': 3, 'Perşembe': 4, 'Cuma': 5, 'Cumartesi': 6, 'Pazar': 7
@@ -2923,9 +2934,11 @@ def handle_resources():
         track = request.args.get('track')
         resource_type = request.args.get('resource_type')
         search = request.args.get('q', '').strip()
+        limit = request.args.get('limit')
+        offset = request.args.get('offset')
+        page = request.args.get('page')
 
-        query = """
-        SELECT r.*, p.name as publisher_name, s.name as subject_name
+        base_query = """
         FROM resources r
         LEFT JOIN publishers p ON r.publisher_id = p.id
         LEFT JOIN subjects s ON r.subject_id = s.id
@@ -2934,31 +2947,51 @@ def handle_resources():
         params = []
 
         if subject_id and subject_id != 'ALL':
-            query += " AND r.subject_id = ?"
+            base_query += " AND r.subject_id = ?"
             params.append(subject_id)
         if exam_type and exam_type != 'ALL':
-            query += " AND r.exam_type = ?"
+            base_query += " AND r.exam_type = ?"
             params.append(exam_type)
         if level and level != 'ALL':
-            query += " AND r.level = ?"
+            base_query += " AND r.level = ?"
             params.append(level)
         if track and track != 'ALL':
-            query += " AND (r.track = ? OR r.track = 'ALL')"
+            base_query += " AND (r.track = ? OR r.track = 'ALL')"
             params.append(track)
         if resource_type and resource_type != 'ALL':
-            query += " AND r.resource_type = ?"
+            base_query += " AND r.resource_type = ?"
             params.append(resource_type)
         if search:
-            query += " AND (r.title LIKE ? OR p.name LIKE ?)"
+            base_query += " AND (r.title LIKE ? OR p.name LIKE ?)"
             params.append(f"%{search}%")
             params.append(f"%{search}%")
 
-        query += " ORDER BY s.sort_order, r.title;"
+        cursor.execute("SELECT COUNT(*) " + base_query, params)
+        total_count = cursor.fetchone()[0]
 
-        cursor.execute(query, params)
+        select_query = "SELECT r.*, p.name as publisher_name, s.name as subject_name " + base_query + " ORDER BY s.sort_order, r.title"
+
+        if limit:
+            try:
+                limit_val = int(limit)
+                page_val = int(page) if page else 1
+                offset_val = int(offset) if offset else (page_val - 1) * limit_val
+                select_query += " LIMIT ? OFFSET ?"
+                query_params = list(params) + [limit_val, offset_val]
+                cursor.execute(select_query, query_params)
+            except Exception:
+                cursor.execute(select_query, params)
+        else:
+            cursor.execute(select_query, params)
+
         resources = [dict(r) for r in cursor.fetchall()]
         conn.close()
-        return jsonify({'resources': resources})
+        return jsonify({
+            'resources': resources,
+            'total': total_count,
+            'limit': int(limit) if limit else None,
+            'page': int(page) if page else 1
+        })
 
     elif request.method == 'POST':
         if user['role'] not in ('ADMIN', 'COACH'):
@@ -5587,7 +5620,7 @@ def get_reports_analytics():
 
     monthly_groups = {}
     for att in attempts:
-        m_key = att['exam_date'][:7]
+        m_key = str(att['exam_date'])[:7] if att['exam_date'] else '2026-08'
         if m_key not in monthly_groups:
             monthly_groups[m_key] = []
         monthly_groups[m_key].append(att)

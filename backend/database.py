@@ -5,10 +5,12 @@ import json
 import re
 from datetime import datetime, date, timedelta
 import werkzeug.security
+import threading
 
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
     PSYCOPG2_AVAILABLE = True
 except ImportError:
     PSYCOPG2_AVAILABLE = False
@@ -194,12 +196,38 @@ class PostgresCursorWrapper:
     def __iter__(self):
         return iter(self._cursor)
 
+_pg_pool = None
+_pg_pool_lock = threading.Lock()
+
+def get_pg_pool():
+    global _pg_pool
+    if _pg_pool is None and is_postgres():
+        with _pg_pool_lock:
+            if _pg_pool is None:
+                db_url = get_database_url()
+                if db_url and PSYCOPG2_AVAILABLE:
+                    try:
+                        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                            minconn=1,
+                            maxconn=10,
+                            dsn=db_url
+                        )
+                        print("✓ PostgreSQL ThreadedConnectionPool initialized successfully (min=1, max=10).")
+                    except Exception as e:
+                        print(f"⚠️ PostgreSQL ThreadedConnectionPool initialization warning: {e}")
+                        _pg_pool = None
+    return _pg_pool
+
 class PostgresConnectionWrapper:
-    def __init__(self, raw_conn):
+    def __init__(self, raw_conn, pool=None):
         self._conn = raw_conn
+        self._pool = pool
+        self._is_closed = False
         self.row_factory = None
 
     def cursor(self):
+        if self._is_closed or self._conn.closed:
+            raise psycopg2.InterfaceError("Connection is closed")
         raw_cur = self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         return PostgresCursorWrapper(raw_cur, self._conn)
 
@@ -209,20 +237,39 @@ class PostgresConnectionWrapper:
         return cur
 
     def commit(self):
-        return self._conn.commit()
+        if not self._is_closed and not self._conn.closed:
+            return self._conn.commit()
 
     def rollback(self):
-        return self._conn.rollback()
+        if not self._is_closed and not self._conn.closed:
+            return self._conn.rollback()
 
     def close(self):
+        if self._is_closed:
+            return
+        self._is_closed = True
         if has_app_context() and g is not None:
             if getattr(g, 'db', None) is self:
                 g.db = None
-        try:
-            if self._conn and not self._conn.closed:
-                return self._conn.close()
-        except Exception:
-            pass
+        
+        if self._pool is not None:
+            try:
+                if self._conn and not self._conn.closed:
+                    self._conn.rollback()
+                    self._pool.putconn(self._conn)
+                else:
+                    self._pool.putconn(self._conn, close=True)
+            except Exception:
+                try:
+                    self._pool.putconn(self._conn, close=True)
+                except Exception:
+                    pass
+        else:
+            try:
+                if self._conn and not self._conn.closed:
+                    self._conn.close()
+            except Exception:
+                pass
 
     @property
     def total_changes(self):
@@ -233,10 +280,9 @@ class PostgresConnectionWrapper:
 # ----------------------------------------------------
 def get_db():
     if is_postgres():
-        db_url = get_database_url()
         if has_app_context() and g is not None:
             db = getattr(g, 'db', None)
-            if db is not None:
+            if db is not None and not getattr(db, '_is_closed', False):
                 try:
                     if getattr(db, '_conn', None) is not None and not db._conn.closed:
                         return db
@@ -244,10 +290,36 @@ def get_db():
                     pass
                 db = None
                 g.db = None
+            
+            pool = get_pg_pool()
+            if pool is not None:
+                try:
+                    raw_conn = pool.getconn()
+                    if raw_conn.closed:
+                        pool.putconn(raw_conn, close=True)
+                        raw_conn = pool.getconn()
+                    wrapper = PostgresConnectionWrapper(raw_conn, pool=pool)
+                    g.db = wrapper
+                    return g.db
+                except Exception as e:
+                    print(f"⚠️ Error getting connection from pool: {e}")
+            
+            db_url = get_database_url()
             raw_conn = psycopg2.connect(db_url)
             g.db = PostgresConnectionWrapper(raw_conn)
             return g.db
         else:
+            pool = get_pg_pool()
+            if pool is not None:
+                try:
+                    raw_conn = pool.getconn()
+                    if raw_conn.closed:
+                        pool.putconn(raw_conn, close=True)
+                        raw_conn = pool.getconn()
+                    return PostgresConnectionWrapper(raw_conn, pool=pool)
+                except Exception:
+                    pass
+            db_url = get_database_url()
             raw_conn = psycopg2.connect(db_url)
             return PostgresConnectionWrapper(raw_conn)
     else:
