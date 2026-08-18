@@ -8847,41 +8847,50 @@ async function renderWeeklyProgramView(studentId = null) {
     }, 10000);
 
     try {
-        let students = [];
-        if (currentUser && currentUser.role !== 'STUDENT') {
-            try {
-                const resSt = await fetch(`${API_BASE}/students`, { 
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    signal: controller.signal
-                });
-                if (resSt.ok) {
-                    const contentTypeSt = resSt.headers.get("content-type") || "";
-                    if (contentTypeSt.includes("application/json")) {
-                        const dataSt = await resSt.json();
-                        students = dataSt.students || [];
-                        if (students.length > 0 && !students.find(s => s.id == weeklyActiveStudentId)) {
-                            weeklyActiveStudentId = students[0].id;
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn("[WEEKLY PROGRAM] Students fetch warning:", e.message);
-            }
-        }
-
         endpoint = `${API_BASE}/weekly-program?student_id=${weeklyActiveStudentId}&week_start=${weeklyCurrentWeekStart}`;
 
-        // Fetch weekly program data with 10s AbortController timeout
-        const resProg = await fetch(endpoint, {
+        // Parallelize students and weekly-program requests
+        const isCoachRole = currentUser && currentUser.role !== 'STUDENT';
+        const fetchStudentsPromise = isCoachRole
+            ? fetch(`${API_BASE}/students`, { 
+                headers: { 'Authorization': `Bearer ${token}` },
+                signal: controller.signal
+            })
+            .then(async r => {
+                if (r.ok) {
+                    const ct = r.headers.get("content-type") || "";
+                    if (ct.includes("application/json")) {
+                        return await r.json();
+                    }
+                }
+                return { students: [] };
+            })
+            .catch(e => {
+                console.warn("[WEEKLY PROGRAM] Students fetch warning:", e.message);
+                return { students: [] };
+            })
+            : Promise.resolve({ students: [] });
+
+        const fetchProgramPromise = fetch(endpoint, {
             headers: { 'Authorization': `Bearer ${token}` },
             signal: controller.signal
         });
+
+        const [dataSt, resProg] = await Promise.all([
+            fetchStudentsPromise,
+            fetchProgramPromise
+        ]);
         clearTimeout(timeoutId);
 
         // Check sequence for race conditions
         if (currentSeq !== weeklyProgramRequestSeq) {
             console.warn("[WEEKLY PROGRAM] Discarding outdated request sequence:", currentSeq, "Active:", weeklyProgramRequestSeq);
             return;
+        }
+
+        let students = dataSt.students || [];
+        if (students.length > 0 && !students.find(s => s.id == weeklyActiveStudentId)) {
+            weeklyActiveStudentId = students[0].id;
         }
 
         const contentTypeProg = resProg.headers.get("content-type") || "";
@@ -10956,9 +10965,34 @@ async function renderStudentAssignmentsView() {
             studentParam = `?status=${currentAssignmentsFilter}&search=${encodeURIComponent(currentAssignmentsSearch)}&sort=${currentAssignmentsSort}`;
         }
 
-        const res = await fetch(`${API_BASE}/odevler${studentParam}`, {
+        // Parallelize assignments and students fetch
+        const isCoachRole = currentUser && currentUser.role !== 'STUDENT';
+        const fetchAssignmentsPromise = fetch(`${API_BASE}/odevler${studentParam}`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+        const fetchStudentsPromise = isCoachRole
+            ? fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } })
+                .then(async r => {
+                    if (r.ok) {
+                        const ct = r.headers.get("content-type") || "";
+                        if (ct.includes("application/json")) {
+                            return await r.json();
+                        }
+                    }
+                    return { students: [] };
+                })
+                .catch(e => {
+                    console.warn("[ASSIGNMENTS] Students fetch warning:", e.message);
+                    return { students: [] };
+                })
+            : Promise.resolve({ students: [] });
+
+        const [res, dataSt] = await Promise.all([
+            fetchAssignmentsPromise,
+            fetchStudentsPromise
+        ]);
+
+        const coachStudents = dataSt.students || [];
 
         if (!res.ok) {
             const contentType = res.headers.get("content-type") || "";
@@ -10996,14 +11030,6 @@ async function renderStudentAssignmentsView() {
         const over = assignments.filter(a => a.status === 'OVERDUE' || (a.due_date && a.due_date < todayStr && a.status !== 'COMPLETED')).length;
         const pct = tot > 0 ? Math.round((comp / tot) * 100) : 0;
         summary = { total: tot, pending: pend, in_progress: inProg, completed: comp, overdue: over, completion_rate: pct };
-
-        // Fetch students for Coach/Admin dropdown filter
-        let coachStudents = [];
-        if (currentUser.role !== 'STUDENT') {
-            const resSt = await fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } });
-            const dataSt = await resSt.json();
-            coachStudents = dataSt.students || [];
-        }
 
         // Today's homeworks
         const todayAssignments = assignments.filter(a => a.due_date === todayStr && a.status !== 'COMPLETED');
