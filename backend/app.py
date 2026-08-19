@@ -1528,8 +1528,14 @@ def get_coach_dashboard():
     green_count = sum(1 for s in students if s.get('risk_level') == 'GREEN')
 
     # Pending Assignments
-    cursor.execute("SELECT COUNT(*) FROM assignments WHERE status = 'LATE';")
-    late_assignments = cursor.fetchone()[0]
+    today_str = date.today().isoformat()
+    cursor.execute("""
+    SELECT COUNT(*) FROM assignments 
+    WHERE status IN ('LATE', 'OVERDUE') 
+       OR (status NOT IN ('COMPLETED', 'CANCELLED', 'SUBMITTED') AND due_date < ?);
+    """, (today_str,))
+    late_row = cursor.fetchone()
+    late_assignments = late_row[0] if late_row else 0
 
     conn.close()
     return jsonify({
@@ -2799,21 +2805,6 @@ def handle_assignments(path_assignment_id=None):
 
         today_str = date.today().isoformat()
 
-        # Update LATE status for expired pending/in_progress assignments
-        if target_student_id:
-            cursor.execute("""
-            UPDATE assignments 
-            SET status = 'LATE'
-            WHERE student_id = ? AND due_date < ? AND status NOT IN ('COMPLETED', 'CANCELLED', 'LATE');
-            """, (target_student_id, today_str))
-        else:
-            cursor.execute("""
-            UPDATE assignments 
-            SET status = 'LATE'
-            WHERE due_date < ? AND status NOT IN ('COMPLETED', 'CANCELLED', 'LATE');
-            """, (today_str,))
-        conn.commit()
-
         # Build dynamic query
         query = """
         SELECT a.*, s.name as subject_name, r.title as resource_title, ct.name as topic_name,
@@ -2861,14 +2852,22 @@ def handle_assignments(path_assignment_id=None):
         params.extend([sort_by, sort_by, sort_by])
 
         cursor.execute(query, params)
-        raw_assignments = [dict(r) for r in cursor.fetchall()]
+        raw_assignments = []
+        for r in cursor.fetchall():
+            item = dict(r)
+            # Dynamically evaluate LATE status without mutating the database
+            curr_st = item.get('status')
+            due_d = item.get('due_date')
+            if curr_st not in ('COMPLETED', 'CANCELLED', 'SUBMITTED') and due_d and str(due_d) < today_str:
+                item['status'] = 'LATE'
+            raw_assignments.append(item)
 
         # Compute Stats Summary from total unfiltered assignments
         total_cnt = len(raw_assignments)
         pending_cnt = sum(1 for r in raw_assignments if r['status'] in ('PENDING', 'ASSIGNED'))
         in_prog_cnt = sum(1 for r in raw_assignments if r['status'] == 'IN_PROGRESS')
-        completed_cnt = sum(1 for r in raw_assignments if r['status'] == 'COMPLETED')
-        overdue_cnt = sum(1 for r in raw_assignments if r['status'] == 'OVERDUE' or (r.get('due_date') and str(r['due_date']) < today_str and r['status'] != 'COMPLETED'))
+        completed_cnt = sum(1 for r in raw_assignments if r['status'] in ('COMPLETED', 'SUBMITTED'))
+        overdue_cnt = sum(1 for r in raw_assignments if r['status'] in ('LATE', 'OVERDUE'))
         completion_rate = round((completed_cnt / total_cnt * 100), 1) if total_cnt > 0 else 0.0
 
         summary = {
@@ -6095,13 +6094,14 @@ def build_student_analytics_context(cursor, student_id):
         data_quality_score = 100
 
     # Fetch Assignment Summary
+    today_str = date.today().isoformat()
     cursor.execute("""
     SELECT 
         COUNT(*) as total_assignments,
-        SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed_count,
-        SUM(CASE WHEN status = 'LATE' OR status = 'OVERDUE' THEN 1 ELSE 0 END) as late_count
+        SUM(CASE WHEN status IN ('COMPLETED', 'SUBMITTED') THEN 1 ELSE 0 END) as completed_count,
+        SUM(CASE WHEN status IN ('LATE', 'OVERDUE') OR (status NOT IN ('COMPLETED', 'CANCELLED', 'SUBMITTED') AND due_date < ?) THEN 1 ELSE 0 END) as late_count
     FROM assignments WHERE student_id = ?;
-    """, (student_id,))
+    """, (today_str, student_id))
     assign_row = cursor.fetchone()
     assign_dict = dict(assign_row) if assign_row else {}
     tot_a = assign_dict.get('total_assignments') or 0
