@@ -11,7 +11,7 @@ import math
 import time
 from datetime import datetime, date, timedelta
 import werkzeug.utils
-from flask import Flask, request, jsonify, send_file, make_response, send_from_directory, g
+from flask import Flask, request, jsonify, send_file, make_response, send_from_directory, g, has_app_context
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
@@ -367,6 +367,12 @@ def create_academic_event(event_type, actor_user_id, recipient_user_id, entity_t
 
 # Helper: Get current user from token/header
 def get_auth_user():
+    # 1. Check request-scope cache in Flask g
+    if has_app_context() and g is not None:
+        cached_user = getattr(g, 'current_user', None)
+        if cached_user is not None:
+            return cached_user
+
     auth_header = request.headers.get('Authorization')
     if not auth_header:
         return None
@@ -374,27 +380,51 @@ def get_auth_user():
         token = auth_header.replace('Bearer ', '').strip()
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, email, role, name, surname, status FROM users WHERE (id = ? OR username = ?) AND status = 'ACTIVE';", (token, token))
-        user = cursor.fetchone()
-        if not user:
-            conn.close()
-            return None
-        user_dict = dict(user)
-        if user_dict['role'] == 'COACH':
-            cursor.execute("SELECT id FROM coaches WHERE user_id = ?;", (user_dict['id'],))
-            row = cursor.fetchone()
-            if row:
-                user_dict['coach_id'] = row['id']
-        elif user_dict['role'] == 'STUDENT':
-            cursor.execute("SELECT id, coach_id, exam_system, track, grade FROM students WHERE user_id = ?;", (user_dict['id'],))
-            row = cursor.fetchone()
-            if row:
-                user_dict['student_id'] = row['id']
-                user_dict['coach_id'] = row['coach_id']
-                user_dict['exam_system'] = row['exam_system'] or 'YKS'
-                user_dict['track'] = row['track']
-                user_dict['grade'] = row['grade']
+
+        # Single Unified LEFT JOIN Query for user + coach + student info
+        query = """
+        SELECT u.id, u.username, u.email, u.role, u.name, u.surname, u.status,
+               c.id as coach_id,
+               s.id as student_id, s.coach_id as student_coach_id, s.exam_system, s.track, s.grade
+        FROM users u
+        LEFT JOIN coaches c ON u.id = c.user_id AND u.role = 'COACH'
+        LEFT JOIN students s ON u.id = s.user_id AND u.role = 'STUDENT'
+        WHERE (u.id = ? OR u.username = ?) AND u.status = 'ACTIVE'
+        LIMIT 1;
+        """
+        cursor.execute(query, (token, token))
+        row = cursor.fetchone()
         conn.close()
+
+        if not row:
+            return None
+
+        r = dict(row)
+        user_dict = {
+            'id': r['id'],
+            'username': r['username'],
+            'email': r['email'],
+            'role': r['role'],
+            'name': r['name'],
+            'surname': r['surname'],
+            'status': r['status']
+        }
+
+        if r['role'] == 'COACH':
+            if r.get('coach_id') is not None:
+                user_dict['coach_id'] = r['coach_id']
+        elif r['role'] == 'STUDENT':
+            if r.get('student_id') is not None:
+                user_dict['student_id'] = r['student_id']
+                user_dict['coach_id'] = r['student_coach_id']
+                user_dict['exam_system'] = r['exam_system'] or 'YKS'
+                user_dict['track'] = r['track']
+                user_dict['grade'] = r['grade']
+
+        # Cache in Flask request scope g
+        if has_app_context() and g is not None:
+            g.current_user = user_dict
+
         return user_dict
     except Exception as e:
         print(f"Error in get_auth_user: {e}")

@@ -106,6 +106,8 @@ def translate_query_for_postgres(sql):
     sql = re.sub(r'\bBOOLEAN\b', 'INTEGER', sql, flags=re.IGNORECASE)
 
     # Translate date/time helper functions
+    sql = re.sub(r'\bDATETIME\(\s*\'now\'\s*,\s*\'\+?(\d+)\s+([a-zA-Z]+)\'\s*\)', r"(CURRENT_TIMESTAMP + INTERVAL '\1 \2')", sql, flags=re.IGNORECASE)
+    sql = re.sub(r'\bDATE\(\s*\'now\'\s*,\s*\'\-?(\d+)\s+([a-zA-Z]+)\'\s*\)', r"(CURRENT_DATE - INTERVAL '\1 \2')", sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bDATE\(\'now\'\)', 'CURRENT_DATE', sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bDATETIME\(\'now\'\)', 'CURRENT_TIMESTAMP', sql, flags=re.IGNORECASE)
 
