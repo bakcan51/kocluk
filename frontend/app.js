@@ -94,7 +94,7 @@ function escapeHtml(str) {
 }
 
 // ============================================================
-// GLOBAL IN-FLIGHT GET REQUEST DEDUPLICATION (PROMISE SHARING)
+// GLOBAL IN-FLIGHT GET REQUEST DEDUPLICATION & MUTATION INVALIDATION
 // ============================================================
 const _inFlightGetRequests = new Map();
 const _originalFetch = typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : null;
@@ -102,34 +102,99 @@ const _originalFetch = typeof window !== 'undefined' && window.fetch ? window.fe
 if (typeof window !== 'undefined' && _originalFetch) {
     window.fetch = function(input, init = {}) {
         const method = (init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+        const urlStr = typeof input === 'string' ? input : (input.url || input.toString());
+        
+        // Auto Invalidation on Successful Mutations (POST, PUT, DELETE, PATCH)
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && urlStr.includes('/api/')) {
+            return _originalFetch(input, init).then(res => {
+                if (res.ok) {
+                    if (urlStr.includes('/odevler')) {
+                        invalidateClientCache('/odevler');
+                        invalidateClientCache('/students');
+                    } else if (urlStr.includes('/students') || urlStr.includes('/rel/')) {
+                        invalidateClientCache('/students');
+                        invalidateClientCache('/mufredat');
+                        invalidateClientCache('/deneme');
+                        invalidateClientCache('/raporlar');
+                        clearCoachStudentsCache();
+                    } else if (urlStr.includes('/deneme')) {
+                        invalidateClientCache('/deneme');
+                        invalidateClientCache('/raporlar');
+                    } else if (urlStr.includes('/kaynak') || urlStr.includes('/resources')) {
+                        invalidateClientCache('/kaynak');
+                        invalidateClientCache('/resources');
+                    } else if (urlStr.includes('/mufredat')) {
+                        invalidateClientCache('/mufredat');
+                    }
+                }
+                return res;
+            });
+        }
         
         // Only deduplicate idempotent GET requests
-        if (method === 'GET') {
-            const urlStr = typeof input === 'string' ? input : (input.url || input.toString());
+        if (method === 'GET' && urlStr.includes('/api/')) {
+            const token = localStorage.getItem('yks_token') || '';
+            const inFlightKey = `${urlStr}::${token}`;
             
-            if (urlStr.includes('/api/')) {
-                const token = localStorage.getItem('yks_token') || '';
-                const inFlightKey = `${urlStr}::${token}`;
-                
-                if (_inFlightGetRequests.has(inFlightKey)) {
-                    return _inFlightGetRequests.get(inFlightKey).then(res => res.clone());
-                }
-                
-                const promise = _originalFetch(input, init).then(res => {
-                    _inFlightGetRequests.delete(inFlightKey);
-                    return res;
-                }).catch(err => {
-                    _inFlightGetRequests.delete(inFlightKey);
-                    throw err;
-                });
-                
-                _inFlightGetRequests.set(inFlightKey, promise);
-                return promise.then(res => res.clone());
+            if (_inFlightGetRequests.has(inFlightKey)) {
+                return _inFlightGetRequests.get(inFlightKey).then(res => res.clone());
             }
+            
+            const promise = _originalFetch(input, init).then(res => {
+                _inFlightGetRequests.delete(inFlightKey);
+                return res;
+            }).catch(err => {
+                _inFlightGetRequests.delete(inFlightKey);
+                throw err;
+            });
+            
+            _inFlightGetRequests.set(inFlightKey, promise);
+            return promise.then(res => res.clone());
         }
         
         return _originalFetch(input, init);
     };
+}
+
+// ============================================================
+// GLOBAL CLIENT CACHE & SWR (STALE-WHILE-REVALIDATE) ENGINE
+// ============================================================
+const _clientApiCache = new Map();
+
+function getClientCacheKey(endpointUrl, method = 'GET') {
+    const userId = currentUser ? (currentUser.id || 'anon') : 'anon';
+    const role = currentUser ? (currentUser.role || 'none') : 'none';
+    const fullUrl = endpointUrl.startsWith('http') ? endpointUrl : `${API_BASE}${endpointUrl.startsWith('/') ? '' : '/'}${endpointUrl}`;
+    return `${userId}::${role}::${method.toUpperCase()}::${fullUrl}`;
+}
+
+function getFromClientCache(endpointUrl, maxAgeMs = 120000) {
+    const key = getClientCacheKey(endpointUrl, 'GET');
+    if (!_clientApiCache.has(key)) return null;
+    const entry = _clientApiCache.get(key);
+    const age = Date.now() - entry.timestamp;
+    return { data: entry.data, isStale: age > maxAgeMs, ageMs: age };
+}
+
+function setClientCache(endpointUrl, data) {
+    const key = getClientCacheKey(endpointUrl, 'GET');
+    _clientApiCache.set(key, { data, timestamp: Date.now() });
+}
+
+function invalidateClientCache(pattern = '') {
+    if (!pattern) {
+        _clientApiCache.clear();
+        return;
+    }
+    for (const key of _clientApiCache.keys()) {
+        if (key.includes(pattern)) {
+            _clientApiCache.delete(key);
+        }
+    }
+}
+
+function clearAllClientCache() {
+    _clientApiCache.clear();
 }
 
 /**
@@ -532,6 +597,7 @@ function checkAuth() {
 function logout() {
     stopGlobalUnreadBadgePolling();
     clearCoachStudentsCache();
+    clearAllClientCache();
     coachStudentsList = [];
     localStorage.removeItem('yks_token');
     localStorage.removeItem('yks_user');
@@ -2037,10 +2103,19 @@ async function renderDenemeView() {
     try {
         let targetStId = selectedStudentId || (coachStudentsList.length > 0 ? coachStudentsList[0].id : null);
         let studentParam = targetStId ? `?student_id=${targetStId}` : '';
-        const res = await fetch(`${API_BASE}/deneme${studentParam}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        const denemeUrl = `/deneme${studentParam}`;
+        const cachedDeneme = getFromClientCache(denemeUrl, 120000);
+        let data = null;
+        
+        if (cachedDeneme && !cachedDeneme.isStale) {
+            data = cachedDeneme.data;
+        } else {
+            const res = await fetch(`${API_BASE}${denemeUrl}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            data = await res.json();
+            setClientCache(denemeUrl, data);
+        }
 
         const student = data.student || {};
         if (student.id) {
@@ -3138,11 +3213,19 @@ async function renderReportsView() {
             ? `&start_date=${currentReportsCustomStart}&end_date=${currentReportsCustomEnd}`
             : '';
         let subjectParam = currentReportsSelectedSubject !== 'ALL' ? `&subject_id=${currentReportsSelectedSubject}` : '';
+        const reportsUrl = `/raporlar?preset=${currentReportsPreset}${studentParam}${customParam}${subjectParam}`;
+        const cachedReports = getFromClientCache(reportsUrl, 120000);
+        let data = null;
 
-        const res = await fetch(`${API_BASE}/raporlar?preset=${currentReportsPreset}${studentParam}${customParam}${subjectParam}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        if (cachedReports && !cachedReports.isStale) {
+            data = cachedReports.data;
+        } else {
+            const res = await fetch(`${API_BASE}${reportsUrl}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            data = await res.json();
+            setClientCache(reportsUrl, data);
+        }
 
         const student = data.student || {};
         const summary = data.overall_summary || {};
@@ -4844,11 +4927,19 @@ async function renderKaynakHavuzuView() {
             exam_system: kaynakSystemFilter,
             resource_type: kaynakTypeFilter
         });
+        const kaynakUrl = `/kaynak-havuzu?${params.toString()}`;
+        const cachedKaynak = getFromClientCache(kaynakUrl, 300000);
+        let data = null;
 
-        const res = await fetch(`${API_BASE}/kaynak-havuzu?${params.toString()}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        if (cachedKaynak && !cachedKaynak.isStale) {
+            data = cachedKaynak.data;
+        } else {
+            const res = await fetch(`${API_BASE}${kaynakUrl}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            data = await res.json();
+            setClientCache(kaynakUrl, data);
+        }
         const resources = data.resources || [];
         const kpis = data.kpis || { total_resources: 0, active_resources: 0, assigned_students: 0, archived_resources: 0 };
         const subjectsList = data.subjects || [];
@@ -10637,10 +10728,19 @@ async function renderMufredatView(targetStudentId = null) {
     // STEP 2: ACTIVE STUDENT LOADED (SEÇİLEN ÖĞRENCİNİN MÜFREDATI)
     // ====================================================
     try {
-        const res = await fetch(`${API_BASE}/mufredat?student_id=${mufredatActiveStudentId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
+        const mufredatUrl = `/mufredat?student_id=${mufredatActiveStudentId}`;
+        const cachedMufredat = getFromClientCache(mufredatUrl, 300000);
+        let data = null;
+
+        if (cachedMufredat && !cachedMufredat.isStale) {
+            data = cachedMufredat.data;
+        } else {
+            const res = await fetch(`${API_BASE}${mufredatUrl}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            data = await res.json();
+            setClientCache(mufredatUrl, data);
+        }
 
         const studentExamSys = (data.student_exam_system || 'YKS').toUpperCase();
         const currentTrack = data.student_track || 'SAYISAL';
@@ -11146,41 +11246,54 @@ async function renderStudentAssignmentsView() {
             studentParam = `?status=${currentAssignmentsFilter}&search=${encodeURIComponent(currentAssignmentsSearch)}&sort=${currentAssignmentsSort}`;
         }
 
-        // Parallelize assignments and students fetch
         const isCoachRole = currentUser && currentUser.role !== 'STUDENT';
-        const fetchAssignmentsPromise = fetch(`${API_BASE}/odevler${studentParam}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const fetchStudentsPromise = isCoachRole
-            ? getCoachStudents().then(st => ({ students: st }))
-            : Promise.resolve({ students: [] });
+        const odevlerUrl = `/odevler${studentParam}`;
+        const cachedOdevler = getFromClientCache(odevlerUrl, 45000);
+        
+        let data = null;
+        let coachStudents = [];
 
-        const [res, dataSt] = await Promise.all([
-            fetchAssignmentsPromise,
-            fetchStudentsPromise
-        ]);
-
-        const coachStudents = dataSt.students || [];
-
-        if (!res.ok) {
-            const contentType = res.headers.get("content-type") || "";
-            let errDetail = `HTTP ${res.status}`;
-            if (contentType.includes("application/json")) {
-                const errJson = await res.json();
-                errDetail = errJson.error || errJson.message || errDetail;
-            } else {
-                const errText = await res.text();
-                console.error("[API ERROR] Non-JSON response received for /api/odevler:", {
-                    status: res.status,
-                    contentType,
-                    url: res.url,
-                    bodySnippet: errText.substring(0, 300)
-                });
+        if (cachedOdevler && !cachedOdevler.isStale) {
+            data = cachedOdevler.data;
+            if (isCoachRole) {
+                coachStudents = await getCoachStudents();
             }
-            throw new Error(`Ödev verileri yüklenirken sunucu hatası oluştu (${errDetail}).`);
-        }
+        } else {
+            const fetchAssignmentsPromise = fetch(`${API_BASE}${odevlerUrl}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const fetchStudentsPromise = isCoachRole
+                ? getCoachStudents().then(st => ({ students: st }))
+                : Promise.resolve({ students: [] });
 
-        const data = await res.json();
+            const [res, dataSt] = await Promise.all([
+                fetchAssignmentsPromise,
+                fetchStudentsPromise
+            ]);
+
+            coachStudents = dataSt.students || [];
+
+            if (!res.ok) {
+                const contentType = res.headers.get("content-type") || "";
+                let errDetail = `HTTP ${res.status}`;
+                if (contentType.includes("application/json")) {
+                    const errJson = await res.json();
+                    errDetail = errJson.error || errJson.message || errDetail;
+                } else {
+                    const errText = await res.text();
+                    console.error("[API ERROR] Non-JSON response received for /api/odevler:", {
+                        status: res.status,
+                        contentType,
+                        url: res.url,
+                        bodySnippet: errText.substring(0, 300)
+                    });
+                }
+                throw new Error(`Ödev verileri yüklenirken sunucu hatası oluştu (${errDetail}).`);
+            }
+
+            data = await res.json();
+            setClientCache(odevlerUrl, data);
+        }
         let rawAssignments = data.assignments || [];
         
         // Filter out garbage test data like 'hghgc'
