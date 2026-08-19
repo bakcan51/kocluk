@@ -5710,54 +5710,86 @@ def get_reports_analytics():
         conn.close()
         return err_resp, err_code
 
-    cursor.execute("""
-    SELECT s.id, s.user_id, s.exam_system, s.track, s.target_university, s.target_department, u.name, u.surname
-    FROM students s JOIN users u ON s.user_id = u.id
-    WHERE s.id = ?;
-    """, (student_id,))
-    st = cursor.fetchone()
-    if not st:
-        conn.close()
-        return jsonify({'error': 'Öğrenci profili bulunamadı.'}), 404
-    student_info = dict(st)
-    student_name = f"{student_info.get('name') or 'Öğrenci'} {student_info.get('surname') or ''}".strip()
-
     date_clause = ""
-    params = [student_id]
+    params = []
     today = date.today()
 
     if preset == '7_DAYS':
         start_dt = today - timedelta(days=7)
-        date_clause = " AND exam_date >= ?"
+        date_clause = " AND ea.exam_date >= ?"
         params.append(start_dt.isoformat())
     elif preset == '30_DAYS':
         start_dt = today - timedelta(days=30)
-        date_clause = " AND exam_date >= ?"
+        date_clause = " AND ea.exam_date >= ?"
         params.append(start_dt.isoformat())
     elif preset == '3_MONTHS':
         start_dt = today - timedelta(days=90)
-        date_clause = " AND exam_date >= ?"
+        date_clause = " AND ea.exam_date >= ?"
         params.append(start_dt.isoformat())
     elif preset == '6_MONTHS':
         start_dt = today - timedelta(days=180)
-        date_clause = " AND exam_date >= ?"
+        date_clause = " AND ea.exam_date >= ?"
         params.append(start_dt.isoformat())
     elif preset == 'THIS_YEAR':
         start_dt = date(today.year, 1, 1)
-        date_clause = " AND exam_date >= ?"
+        date_clause = " AND ea.exam_date >= ?"
         params.append(start_dt.isoformat())
     elif preset == 'CUSTOM' and start_date_arg and end_date_arg:
-        date_clause = " AND exam_date >= ? AND exam_date <= ?"
+        date_clause = " AND ea.exam_date >= ? AND ea.exam_date <= ?"
         params.append(start_date_arg)
         params.append(end_date_arg)
 
+    query_params = list(params)
+    query_params.append(student_id)
+
     cursor.execute(f"""
-    SELECT id, student_id, exam_system, exam_type, exam_name, publisher, exam_date, duration_minutes, total_net, status
-    FROM exam_attempts
-    WHERE student_id = ? AND status != 'CANCELLED' {date_clause}
-    ORDER BY exam_date ASC, id ASC;
-    """, params)
-    attempts = [dict(r) for r in cursor.fetchall()]
+    SELECT 
+        s.id as student_id, s.user_id, s.exam_system as student_exam_system, s.track, s.target_university, s.target_department,
+        u.name, u.surname,
+        ea.id as attempt_id, ea.exam_system as attempt_exam_system, ea.exam_type, ea.exam_name, ea.publisher, 
+        ea.exam_date, ea.duration_minutes, ea.total_net, ea.status
+    FROM students s
+    JOIN users u ON s.user_id = u.id
+    LEFT JOIN exam_attempts ea 
+        ON ea.student_id = s.id 
+       AND ea.status != 'CANCELLED' {date_clause}
+    WHERE s.id = ?
+    ORDER BY ea.exam_date ASC, ea.id ASC;
+    """, query_params)
+    rows = [dict(r) for r in cursor.fetchall()]
+
+    if not rows:
+        conn.close()
+        return jsonify({'error': 'Öğrenci profili bulunamadı.'}), 404
+
+    first_r = rows[0]
+    student_info = {
+        'id': first_r['student_id'],
+        'user_id': first_r['user_id'],
+        'exam_system': first_r['student_exam_system'],
+        'track': first_r['track'],
+        'target_university': first_r['target_university'],
+        'target_department': first_r['target_department'],
+        'name': first_r['name'],
+        'surname': first_r['surname']
+    }
+    student_name = f"{student_info.get('name') or 'Öğrenci'} {student_info.get('surname') or ''}".strip()
+
+    attempts = []
+    for r in rows:
+        if r.get('attempt_id') is not None:
+            attempts.append({
+                'id': r['attempt_id'],
+                'student_id': r['student_id'],
+                'exam_system': r['attempt_exam_system'] or r['student_exam_system'],
+                'exam_type': r['exam_type'],
+                'exam_name': r['exam_name'],
+                'publisher': r['publisher'],
+                'exam_date': r['exam_date'],
+                'duration_minutes': r['duration_minutes'],
+                'total_net': r['total_net'],
+                'status': r['status']
+            })
 
     if not attempts:
         cursor.execute(f"""
