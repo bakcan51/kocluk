@@ -1879,6 +1879,7 @@ def handle_mock_exams():
         test_results_by_attempt = {}
         topic_results_by_attempt = {}
         question_results_by_attempt = {}
+        error_basket = {}
 
         if attempts:
             attempt_ids = [att['id'] for att in attempts]
@@ -1915,23 +1916,37 @@ def handle_mock_exams():
                     topic_results_by_attempt[att_id] = []
                 topic_results_by_attempt[att_id].append(row_dict)
 
-            # 3. Bulk Question Results
+            # 3. Bulk Question Results (Only if include_questions is explicitly requested)
+            include_questions = request.args.get('include_questions', 'false').lower() == 'true'
+            if include_questions:
+                cursor.execute(f"""
+                SELECT qr.*, s.name as subject_name, ct.name as topic_name
+                FROM exam_question_results qr
+                LEFT JOIN subjects s ON qr.subject_id = s.id
+                LEFT JOIN topics ct ON qr.curriculum_topic_id = ct.id
+                WHERE qr.exam_attempt_id IN ({placeholders})
+                ORDER BY qr.exam_attempt_id;
+                """, tuple(attempt_ids))
+                for r in cursor.fetchall():
+                    row_dict = dict(r)
+                    att_id = row_dict['exam_attempt_id']
+                    if att_id not in question_results_by_attempt:
+                        question_results_by_attempt[att_id] = []
+                    question_results_by_attempt[att_id].append(row_dict)
+
+            # 4. Error Basket Aggregation via lightweight SQL Aggregate
             cursor.execute(f"""
-            SELECT qr.*, s.name as subject_name, ct.name as topic_name
-            FROM exam_question_results qr
-            LEFT JOIN subjects s ON qr.subject_id = s.id
-            LEFT JOIN topics ct ON qr.curriculum_topic_id = ct.id
-            WHERE qr.exam_attempt_id IN ({placeholders})
-            ORDER BY qr.exam_attempt_id;
+            SELECT error_type, COUNT(*) as cnt
+            FROM exam_question_results
+            WHERE exam_attempt_id IN ({placeholders})
+            GROUP BY error_type;
             """, tuple(attempt_ids))
             for r in cursor.fetchall():
-                row_dict = dict(r)
-                att_id = row_dict['exam_attempt_id']
-                if att_id not in question_results_by_attempt:
-                    question_results_by_attempt[att_id] = []
-                question_results_by_attempt[att_id].append(row_dict)
+                r_dict = dict(r)
+                etype = r_dict.get('error_type') or 'OTHER'
+                error_basket[etype] = int(r_dict.get('cnt') or 0)
 
-            # 4. Legacy Mock Exams Fallback (if any attempt came from mock_exams and has no test_results)
+            # 5. Legacy Mock Exams Fallback (if any attempt came from mock_exams and has no test_results)
             legacy_ids = [att['id'] for att in attempts if 'title' in att and att['id'] not in test_results_by_attempt]
             if legacy_ids:
                 leg_placeholders = ', '.join(['?'] * len(legacy_ids))
@@ -2051,13 +2066,6 @@ def handle_mock_exams():
 
         recurring_weaknesses.sort(key=lambda x: x['priority_score'], reverse=True)
 
-        # Error Basket Aggregation
-        error_basket = {}
-        for att in enriched_attempts:
-            for q in att.get('question_results', []):
-                etype = q.get('error_type', 'OTHER')
-                error_basket[etype] = error_basket.get(etype, 0) + 1
-
         top_error_type = max(error_basket.keys(), key=lambda k: error_basket[k]) if error_basket else 'KNOWLEDGE_GAP'
 
         # Auto Executive Commentary Report Text
@@ -2078,144 +2086,102 @@ def handle_mock_exams():
             'auto_report': auto_report
         })
 
-    elif request.method == 'POST':
-        data = request.json or {}
-        req_st_id = data.get('student_id')
-        student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, req_st_id)
-        if err_resp:
-            conn.close()
-            return err_resp, err_code
-        exam_system = data.get('exam_system', 'YKS')
-        exam_type = data.get('exam_type', 'TYT_GENEL')
-        exam_name = data.get('exam_name') or data.get('title') or 'Genel Deneme'
-        publisher = data.get('publisher', 'Genel')
-        exam_date_val = data.get('exam_date') or date.today().isoformat()
-        duration_minutes = int(data.get('duration_minutes') or 0)
-        source = 'COACH' if user['role'] in ('COACH', 'ADMIN') else 'STUDENT'
-        notes = data.get('notes', '')
-
-        results_list = data.get('results', []) # Subject test results
-        topics_list = data.get('topics', [])   # Detailed topic breakdown
-        questions_list = data.get('questions', []) # Question-by-question errors
-
-        # Calculate subject nets & total net
-        total_correct = sum(int(x.get('correct', 0)) for x in results_list)
-        total_wrong = sum(int(x.get('wrong') or x.get('incorrect') or 0) for x in results_list)
-        total_blank = sum(int(x.get('blank') or x.get('empty') or 0) for x in results_list)
-        
-        calculated_subject_results = []
-        tot_net = 0.0
-        for item in results_list:
-            sub_id = item['subject_id']
-            q_cnt = int(item.get('question_count') or item.get('count') or 0)
-            c_cnt = int(item.get('correct', 0))
-            w_cnt = int(item.get('wrong') or item.get('incorrect') or 0)
-            b_cnt = int(item.get('blank') or item.get('empty') or 0)
-            
-            s_net = calc_net(c_cnt, w_cnt, exam_system)
-            s_pct = round((c_cnt / q_cnt * 100), 1) if q_cnt > 0 else 0.0
-            tot_net += s_net
-
-            calculated_subject_results.append({
-                'subject_id': sub_id,
-                'question_count': q_cnt,
-                'correct': c_cnt,
-                'wrong': w_cnt,
-                'blank': b_cnt,
-                'net': s_net,
-                'success_rate': max(0.0, s_pct)
-            })
-
-        tot_net = round(tot_net, 2)
-
-        # 1. Insert into exam_attempts
-        cursor.execute("""
-        INSERT INTO exam_attempts (student_id, exam_system, exam_type, exam_name, publisher, exam_date, duration_minutes, total_net, source, status, notes, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?);
-        """, (student_id, exam_system, exam_type, exam_name, publisher, exam_date_val, duration_minutes, tot_net, source, notes, user['id']))
-        attempt_id = cursor.lastrowid
-
-        # 2. Insert into exam_test_results
-        for sr in calculated_subject_results:
-            cursor.execute("""
-            INSERT INTO exam_test_results (exam_attempt_id, subject_id, question_count, correct, wrong, blank, net, success_rate)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-            """, (attempt_id, sr['subject_id'], sr['question_count'], sr['correct'], sr['wrong'], sr['blank'], sr['net'], sr['success_rate']))
-
-        # 3. Insert into exam_topic_results
-        for tp in topics_list:
-            sub_id = tp['subject_id']
-            ct_id = tp['curriculum_topic_id']
-            t_q = int(tp.get('question_count', 1))
-            t_c = int(tp.get('correct', 0))
-            t_w = int(tp.get('wrong', 0))
-            t_b = int(tp.get('blank', 0))
-            t_net = calc_net(t_c, t_w, exam_system)
-            t_pct = round((t_net / t_q * 100), 1) if t_q > 0 else 0.0
-            t_prio = compute_priority_score(t_w, t_b, t_q, 1, t_pct)
-
-            cursor.execute("""
-            INSERT INTO exam_topic_results (exam_attempt_id, subject_id, curriculum_topic_id, question_count, correct, wrong, blank, net, success_rate, priority_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, (attempt_id, sub_id, ct_id, t_q, t_c, t_w, t_b, t_net, t_pct, t_prio))
-
-        # 4. Insert into exam_question_results
-        for q in questions_list:
-            cursor.execute("""
-            INSERT INTO exam_question_results (exam_attempt_id, subject_id, curriculum_topic_id, question_number, student_answer, correct_answer, result, error_type, confidence_level, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, (attempt_id, q.get('subject_id', 1), q.get('curriculum_topic_id'), q.get('question_number', 1), q.get('student_answer'), q.get('correct_answer'), q.get('result', 'WRONG'), q.get('error_type', 'OTHER'), q.get('confidence_level', 'MEDIUM'), q.get('note')))
-
-        # Legacy sync for backwards compatibility
-        try:
-            cursor.execute("""
-            INSERT INTO mock_exams (student_id, title, exam_type, field, publisher, total_correct, total_wrong, total_blank, total_net, exam_system)
-            VALUES (?, ?, ?, 'ORTAK', ?, ?, ?, ?, ?, ?);
-            """, (student_id, exam_name, 'TYT', publisher, total_correct, total_wrong, total_blank, tot_net, exam_system))
-            legacy_mock_id = cursor.lastrowid
-            for sr in calculated_subject_results:
-                cursor.execute("""
-                INSERT INTO mock_exam_results (student_id, mock_exam_id, subject_id, correct, incorrect, empty, net, exam_date, analysis_done)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1);
-                """, (student_id, legacy_mock_id, sr['subject_id'], sr['correct'], sr['wrong'], sr['blank'], sr['net'], exam_date_val))
-        except Exception as e:
-            print(f"Legacy mock sync warning: {e}")
-
-        conn.commit()
-
-        # Send auto notification
-        try:
-            coach_uid = get_coach_user_id_for_student(student_id)
-            if coach_uid and user['id'] != coach_uid:
-                send_auto_notification(
-                    user['id'], 
-                    coach_uid, 
-                    f"📝 Yeni Deneme Kaydı: {exam_name} ({exam_type}) - Net: {tot_net}",
-                    cursor=cursor
-                )
-            conn.commit()
-        except Exception as e:
-            print(f"Deneme notification error: {e}")
-
-        conn.close()
-        return jsonify({
-            'message': 'Deneme sınavı ve detaylı analizi başarıyla kaydedildi!',
-            'attempt_id': attempt_id,
-            'total_net': tot_net
-        })
-
-@app.route('/api/deneme/<int:attempt_id>', methods=['DELETE'])
-def delete_deneme_attempt(attempt_id):
+@app.route('/api/deneme/<int:attempt_id>/detay', methods=['GET'])
+@app.route('/api/deneme/<int:attempt_id>', methods=['GET', 'DELETE'])
+def get_or_delete_deneme_attempt(attempt_id):
     user = get_auth_user()
     if not user:
         return jsonify({'error': 'Yetkisiz işlem'}), 401
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("UPDATE exam_attempts SET status = 'CANCELLED' WHERE id = ?;", (attempt_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Deneme kaydı iptal/arşiv durumuna alındı.'})
+
+    if request.method == 'DELETE':
+        cursor.execute("SELECT student_id FROM exam_attempts WHERE id = ?;", (attempt_id,))
+        att_row = cursor.fetchone()
+        if not att_row:
+            conn.close()
+            return jsonify({'error': 'Deneme kaydı bulunamadı.'}), 404
+            
+        student_id = att_row['student_id']
+        # RBAC Check for delete
+        if user['role'] == 'STUDENT':
+            cursor.execute("SELECT id FROM students WHERE user_id = ?;", (user['id'],))
+            st_row = cursor.fetchone()
+            if not st_row or st_row['id'] != student_id:
+                conn.close()
+                return jsonify({'error': 'Bu denemeyi silme yetkiniz bulunmuyor.'}), 403
+        elif user['role'] == 'COACH':
+            if not check_coach_owns_student(cursor, user, student_id):
+                conn.close()
+                return jsonify({'error': 'Bu denemeyi silme yetkiniz bulunmuyor.'}), 403
+
+        cursor.execute("UPDATE exam_attempts SET status = 'CANCELLED' WHERE id = ?;", (attempt_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Deneme kaydı iptal/arşiv durumuna alındı.'})
+
+    elif request.method == 'GET':
+        cursor.execute("SELECT * FROM exam_attempts WHERE id = ? AND status != 'CANCELLED';", (attempt_id,))
+        att_row = cursor.fetchone()
+        if not att_row:
+            conn.close()
+            return jsonify({'error': 'Deneme kaydı bulunamadı.'}), 404
+
+        att = dict(att_row)
+        student_id = att['student_id']
+
+        # RBAC Check
+        if user['role'] == 'STUDENT':
+            cursor.execute("SELECT id FROM students WHERE user_id = ?;", (user['id'],))
+            st_row = cursor.fetchone()
+            if not st_row or st_row['id'] != student_id:
+                conn.close()
+                return jsonify({'error': 'Bu deneme detayını görüntüleme yetkiniz bulunmuyor.'}), 403
+        elif user['role'] == 'COACH':
+            if not check_coach_owns_student(cursor, user, student_id):
+                conn.close()
+                return jsonify({'error': 'Bu deneme detayını görüntüleme yetkiniz bulunmuyor.'}), 403
+
+        # 1. Subject Test Results
+        cursor.execute("""
+        SELECT tr.*, s.name as subject_name
+        FROM exam_test_results tr
+        JOIN subjects s ON tr.subject_id = s.id
+        WHERE tr.exam_attempt_id = ?
+        ORDER BY s.sort_order ASC;
+        """, (attempt_id,))
+        test_results = [dict(r) for r in cursor.fetchall()]
+
+        # 2. Topic Results
+        cursor.execute("""
+        SELECT tr.*, s.name as subject_name, ct.name as topic_name
+        FROM exam_topic_results tr
+        JOIN subjects s ON tr.subject_id = s.id
+        JOIN topics ct ON tr.curriculum_topic_id = ct.id
+        WHERE tr.exam_attempt_id = ?
+        ORDER BY tr.id ASC;
+        """, (attempt_id,))
+        topic_results = [dict(r) for r in cursor.fetchall()]
+
+        # 3. Question Results
+        cursor.execute("""
+        SELECT qr.*, s.name as subject_name, ct.name as topic_name
+        FROM exam_question_results qr
+        LEFT JOIN subjects s ON qr.subject_id = s.id
+        LEFT JOIN topics ct ON qr.curriculum_topic_id = ct.id
+        WHERE qr.exam_attempt_id = ?
+        ORDER BY qr.question_number ASC, qr.id ASC;
+        """, (attempt_id,))
+        question_results = [dict(r) for r in cursor.fetchall()]
+
+        conn.close()
+        return jsonify({
+            'attempt': att,
+            'test_results': test_results,
+            'topic_results': topic_results,
+            'question_results': question_results
+        })
 
 @app.route('/api/deneme/compare', methods=['GET'])
 def compare_mock_exams():

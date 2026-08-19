@@ -12362,9 +12362,70 @@ function updateCalcNet() {
     }
 }
 
-function openDenemeDetailModal(attemptId) {
+async function openDenemeDetailModal(attemptId) {
     if (!attemptId) return;
     selectedDenemeAttemptId = parseInt(attemptId);
+    
+    const token = localStorage.getItem('yks_token');
+    try {
+        const res = await fetch(`${API_BASE}/deneme/${attemptId}/detay`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const att = data.attempt || {};
+            const qList = data.question_results || [];
+
+            let modalHtml = `
+            <div class="space-y-4">
+                <div class="glass-card p-4 border border-indigo-900/60 bg-indigo-950/30 rounded-xl flex items-center justify-between">
+                    <div>
+                        <h4 class="text-sm font-bold text-white">${escapeHtml(att.exam_name || 'Deneme Sınavı')}</h4>
+                        <p class="text-xs text-slate-400 mt-0.5">${att.exam_date || ''} • ${escapeHtml(att.publisher || 'Yayın')} • Süre: ${att.duration_minutes || 0} dk</p>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] font-bold text-indigo-400 uppercase block">Toplam Net</span>
+                        <span class="text-xl font-black text-emerald-400">${att.total_net ? att.total_net.toFixed(2) : '0.00'}</span>
+                    </div>
+                </div>
+
+                ${qList.length > 0 ? `
+                <div>
+                    <h5 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">📝 Soru Bazlı Hata & Analiz Listesi</h5>
+                    <div class="max-h-60 overflow-y-auto space-y-1.5 pr-1 text-xs">
+                        ${qList.map(q => `
+                        <div class="p-2.5 rounded-lg border border-slate-800 bg-slate-900/80 flex items-center justify-between gap-2">
+                            <div>
+                                <span class="font-bold text-indigo-300">Soru #${q.question_number || '1'}</span>
+                                <span class="text-slate-400 ml-1">(${escapeHtml(q.subject_name || 'Ders')} - ${escapeHtml(q.topic_name || 'Konu')})</span>
+                                ${q.note ? `<p class="text-[11px] text-slate-400 italic mt-0.5">${escapeHtml(q.note)}</p>` : ''}
+                            </div>
+                            <div class="text-right flex items-center gap-2">
+                                <span class="text-[10px] px-2 py-0.5 rounded font-bold ${q.result === 'CORRECT' ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}">${q.result || 'WRONG'}</span>
+                                <span class="text-[10px] text-slate-500">${escapeHtml(q.error_type || 'OTHER')}</span>
+                            </div>
+                        </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : `
+                <div class="p-4 text-center text-xs text-slate-500 bg-slate-900/50 rounded-xl border border-slate-800">
+                    Bu deneme için kaydedilmiş soru bazlı hata verisi bulunmuyor. Ders ve konu netleri geçerlidir.
+                </div>
+                `}
+
+                <div class="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white transition">Kapat</button>
+                    <button type="button" onclick="closeModal(); renderDenemeView();" class="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition">Denemeyi İncele</button>
+                </div>
+            </div>
+            `;
+            openModal(`📋 ${escapeHtml(att.exam_name || 'Deneme')} — Detay Karnesi`, modalHtml);
+            return;
+        }
+    } catch (e) {
+        console.warn('Detay yüklenemedi, ana ekran render ediliyor:', e);
+    }
     renderDenemeView();
 }
 
