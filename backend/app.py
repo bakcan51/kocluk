@@ -33,7 +33,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-from database import get_db, DB_PATH, init_db, ensure_lgs_seeded
+from database import get_db, DB_PATH, init_db, ensure_lgs_seeded, is_postgres
 
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend'))
 if not os.path.exists(frontend_dir):
@@ -3544,66 +3544,150 @@ def get_student_mufredat():
         conn.close()
         return jsonify(err), status
 
-    cursor.execute("""
-    SELECT s.id, s.track, s.grade, COALESCE(s.exam_system, 'YKS') as exam_system, u.name as student_name
-    FROM students s
-    JOIN users u ON s.user_id = u.id
-    WHERE s.id = ?;
-    """, (student_id,))
-    st = cursor.fetchone()
-    if not st:
+    if is_postgres():
+        cursor.execute("""
+        SELECT json_build_object(
+            'student', (
+                SELECT json_build_object(
+                    'id', s.id,
+                    'track', s.track,
+                    'grade', s.grade,
+                    'exam_system', COALESCE(s.exam_system, 'YKS'),
+                    'student_name', u.name
+                )
+                FROM students s
+                JOIN users u ON s.user_id = u.id
+                WHERE s.id = %s
+            ),
+            'topics', (
+                SELECT json_agg(t) FROM (
+                    SELECT * FROM curriculum 
+                    WHERE active = 1 
+                      AND (
+                          (
+                              (SELECT COALESCE(exam_system, 'YKS') FROM students WHERE id = %s) = 'LGS' 
+                              AND exam_system = 'LGS'
+                          )
+                          OR (
+                              (SELECT COALESCE(exam_system, 'YKS') FROM students WHERE id = %s) != 'LGS'
+                              AND (exam_system = 'YKS' OR exam_system IS NULL)
+                              AND (
+                                  exam_type = 'TYT' 
+                                  OR (
+                                      (SELECT UPPER(COALESCE(track, 'SAYISAL')) FROM students WHERE id = %s) = 'YDT' 
+                                      AND exam_type = 'YDT' AND field = 'YDT'
+                                  )
+                                  OR (
+                                      (SELECT UPPER(COALESCE(track, 'SAYISAL')) FROM students WHERE id = %s) NOT IN ('YDT') 
+                                      AND exam_type = 'AYT' 
+                                      AND field = CASE 
+                                          WHEN (SELECT UPPER(COALESCE(track, 'SAYISAL')) FROM students WHERE id = %s) IN ('SAY', 'MF', 'SAYISAL') THEN 'SAYISAL'
+                                          WHEN (SELECT UPPER(COALESCE(track, 'SAYISAL')) FROM students WHERE id = %s) IN ('TM', 'EA') THEN 'EA'
+                                          WHEN (SELECT UPPER(COALESCE(track, 'SAYISAL')) FROM students WHERE id = %s) IN ('TS', 'SOZEL') THEN 'SOZEL'
+                                          ELSE 'SAYISAL'
+                                      END
+                                  )
+                              )
+                          )
+                      )
+                    ORDER BY exam_type DESC, subject ASC, display_order ASC
+                ) t
+            ),
+            'resources', (
+                SELECT json_agg(r_row) FROM (
+                    SELECT str.*, r.title as resource_title, r.publisher_id, p.name as publisher_name, r.subject_id, s.name as subject_name
+                    FROM student_topic_resources str
+                    JOIN resources r ON str.resource_id = r.id
+                    LEFT JOIN publishers p ON r.publisher_id = p.id
+                    LEFT JOIN subjects s ON r.subject_id = s.id
+                    WHERE str.student_id = %s AND str.status != 'ARCHIVED'
+                ) r_row
+            ),
+            'statuses', (
+                SELECT json_agg(s_row) FROM (
+                    SELECT curriculum_id, status FROM student_topic_statuses WHERE student_id = %s
+                ) s_row
+            )
+        ) as payload;
+        """, (student_id, student_id, student_id, student_id, student_id, student_id, student_id, student_id, student_id, student_id))
+        row = cursor.fetchone()
+        payload = row['payload'] if row and 'payload' in row else (row[0] if row else {})
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        st = payload.get('student')
+        if not st:
+            conn.close()
+            return jsonify({'error': 'Öğrenci bulunamadı'}), 404
+        student_name = st['student_name']
+        student_grade = st['grade'] or '12. Sınıf'
+        student_track = st['track'] or 'SAYISAL'
+        student_exam_system = st['exam_system'] or 'YKS'
+        topics = payload.get('topics') or []
+        assignments = payload.get('resources') or []
+        statuses = payload.get('statuses') or []
+        topic_statuses_map = {row['curriculum_id']: row['status'] for row in statuses if row and 'curriculum_id' in row}
         conn.close()
-        return jsonify({'error': 'Öğrenci bulunamadı'}), 404
-
-    student_name = st['student_name']
-    student_grade = st['grade'] or '12. Sınıf'
-    student_track = st['track'] or 'SAYISAL'
-    student_exam_system = st['exam_system'] or 'YKS'
-
-    student_track = student_track.upper()
-    if student_track in ['SAY', 'MF']: student_track = 'SAYISAL'
-    if student_track in ['TM']: student_track = 'EA'
-    if student_track in ['TS']: student_track = 'SOZEL'
-    if student_track in ['DIL']: student_track = 'YDT'
-
-    if student_exam_system == 'LGS':
-        cursor.execute("""
-        SELECT * FROM curriculum 
-        WHERE active = 1 AND exam_system = 'LGS'
-        ORDER BY display_order ASC, subject ASC;
-        """)
-    elif student_track == 'YDT':
-        cursor.execute("""
-        SELECT * FROM curriculum 
-        WHERE active = 1 AND (exam_system = 'YKS' OR exam_system IS NULL) AND (exam_type = 'TYT' OR (exam_type = 'YDT' AND field = 'YDT'))
-        ORDER BY exam_type DESC, subject ASC, display_order ASC;
-        """)
     else:
         cursor.execute("""
-        SELECT * FROM curriculum 
-        WHERE active = 1 AND (exam_system = 'YKS' OR exam_system IS NULL) AND (exam_type = 'TYT' OR (exam_type = 'AYT' AND field = ?))
-        ORDER BY exam_type DESC, subject ASC, display_order ASC;
-        """, (student_track,))
+        SELECT s.id, s.track, s.grade, COALESCE(s.exam_system, 'YKS') as exam_system, u.name as student_name
+        FROM students s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.id = ?;
+        """, (student_id,))
+        st = cursor.fetchone()
+        if not st:
+            conn.close()
+            return jsonify({'error': 'Öğrenci bulunamadı'}), 404
 
-    topics = [dict(r) for r in cursor.fetchall()]
+        student_name = st['student_name']
+        student_grade = st['grade'] or '12. Sınıf'
+        student_track = st['track'] or 'SAYISAL'
+        student_exam_system = st['exam_system'] or 'YKS'
 
-    # Fetch assigned active resources
-    cursor.execute("""
-    SELECT str.*, r.title as resource_title, r.publisher_id, p.name as publisher_name, r.subject_id, s.name as subject_name
-    FROM student_topic_resources str
-    JOIN resources r ON str.resource_id = r.id
-    LEFT JOIN publishers p ON r.publisher_id = p.id
-    LEFT JOIN subjects s ON r.subject_id = s.id
-    WHERE str.student_id = ? AND str.status != 'ARCHIVED';
-    """, (student_id,))
-    assignments = [dict(r) for r in cursor.fetchall()]
+        student_track = student_track.upper()
+        if student_track in ['SAY', 'MF']: student_track = 'SAYISAL'
+        if student_track in ['TM']: student_track = 'EA'
+        if student_track in ['TS']: student_track = 'SOZEL'
+        if student_track in ['DIL']: student_track = 'YDT'
 
-    # Fetch decoupled topic statuses
-    cursor.execute("SELECT curriculum_id, status FROM student_topic_statuses WHERE student_id = ?;", (student_id,))
-    topic_status_rows = cursor.fetchall()
-    topic_statuses_map = {row['curriculum_id']: row['status'] for row in topic_status_rows}
+        if student_exam_system == 'LGS':
+            cursor.execute("""
+            SELECT * FROM curriculum 
+            WHERE active = 1 AND exam_system = 'LGS'
+            ORDER BY display_order ASC, subject ASC;
+            """)
+        elif student_track == 'YDT':
+            cursor.execute("""
+            SELECT * FROM curriculum 
+            WHERE active = 1 AND (exam_system = 'YKS' OR exam_system IS NULL) AND (exam_type = 'TYT' OR (exam_type = 'YDT' AND field = 'YDT'))
+            ORDER BY exam_type DESC, subject ASC, display_order ASC;
+            """)
+        else:
+            cursor.execute("""
+            SELECT * FROM curriculum 
+            WHERE active = 1 AND (exam_system = 'YKS' OR exam_system IS NULL) AND (exam_type = 'TYT' OR (exam_type = 'AYT' AND field = ?))
+            ORDER BY exam_type DESC, subject ASC, display_order ASC;
+            """, (student_track,))
 
-    conn.close()
+        topics = [dict(r) for r in cursor.fetchall()]
+
+        # Fetch assigned active resources
+        cursor.execute("""
+        SELECT str.*, r.title as resource_title, r.publisher_id, p.name as publisher_name, r.subject_id, s.name as subject_name
+        FROM student_topic_resources str
+        JOIN resources r ON str.resource_id = r.id
+        LEFT JOIN publishers p ON r.publisher_id = p.id
+        LEFT JOIN subjects s ON r.subject_id = s.id
+        WHERE str.student_id = ? AND str.status != 'ARCHIVED';
+        """, (student_id,))
+        assignments = [dict(r) for r in cursor.fetchall()]
+
+        # Fetch decoupled topic statuses
+        cursor.execute("SELECT curriculum_id, status FROM student_topic_statuses WHERE student_id = ?;", (student_id,))
+        topic_status_rows = cursor.fetchall()
+        topic_statuses_map = {row['curriculum_id']: row['status'] for row in topic_status_rows}
+
+        conn.close()
 
     assigned_map = {}
     for a in assignments:
