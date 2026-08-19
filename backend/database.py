@@ -99,12 +99,18 @@ def translate_query_for_postgres(sql):
     # Translate AUTOINCREMENT to SERIAL PRIMARY KEY in DDL
     sql = re.sub(r'INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT', 'SERIAL PRIMARY KEY', sql, flags=re.IGNORECASE)
 
+    # Translate ADD COLUMN to ADD COLUMN IF NOT EXISTS in PostgreSQL DDL
+    sql = re.sub(r'\bADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS\b)', 'ADD COLUMN IF NOT EXISTS ', sql, flags=re.IGNORECASE)
+
     # Translate BOOLEAN to INTEGER for PostgreSQL DDL
     sql = re.sub(r'\bBOOLEAN\b', 'INTEGER', sql, flags=re.IGNORECASE)
 
     # Translate date/time helper functions
     sql = re.sub(r'\bDATE\(\'now\'\)', 'CURRENT_DATE', sql, flags=re.IGNORECASE)
     sql = re.sub(r'\bDATETIME\(\'now\'\)', 'CURRENT_TIMESTAMP', sql, flags=re.IGNORECASE)
+
+    # Translate INSTR(str, substr) to POSITION(substr IN str)
+    sql = re.sub(r'\bINSTR\s*\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)', r'POSITION(\2 IN \1)', sql, flags=re.IGNORECASE)
 
     # Translate parameter placeholders '?' to '%s' outside quotes
     parts = []
@@ -1254,6 +1260,12 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_user_id, is_read);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_assignments_student_status ON assignments(student_id, status);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_mock_exams_student ON mock_exams(student_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_exam_attempts_student_id ON exam_attempts(student_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_exam_test_results_attempt_id ON exam_test_results(exam_attempt_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_exam_topic_results_attempt_id ON exam_topic_results(exam_attempt_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_exam_question_results_attempt_id ON exam_question_results(exam_attempt_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_student_topic_res_student_id ON student_topic_resources(student_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_resources_owner ON resources(owner_type, owner_id);")
 
     conn.commit()
     conn.close()
@@ -1532,6 +1544,26 @@ def ensure_lgs_seeded():
                 INSERT INTO coach_student_relationships (coach_id, student_id, relationship_type, status, assigned_by)
                 VALUES (?, ?, 'MAIN_COACH', 'ACTIVE', 1);
                 """, (coach_id, sid))
+
+    # Ensure Performance Indexes Exist
+    for idx_sql in [
+        "CREATE INDEX IF NOT EXISTS idx_students_user_id ON students(user_id);",
+        "CREATE INDEX IF NOT EXISTS idx_students_coach_id ON students(coach_id);",
+        "CREATE INDEX IF NOT EXISTS idx_weekly_programs_student_date ON weekly_programs(student_id, date);",
+        "CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_user_id, is_read);",
+        "CREATE INDEX IF NOT EXISTS idx_assignments_student_status ON assignments(student_id, status);",
+        "CREATE INDEX IF NOT EXISTS idx_mock_exams_student ON mock_exams(student_id);",
+        "CREATE INDEX IF NOT EXISTS idx_exam_attempts_student_id ON exam_attempts(student_id);",
+        "CREATE INDEX IF NOT EXISTS idx_exam_test_results_attempt_id ON exam_test_results(exam_attempt_id);",
+        "CREATE INDEX IF NOT EXISTS idx_exam_topic_results_attempt_id ON exam_topic_results(exam_attempt_id);",
+        "CREATE INDEX IF NOT EXISTS idx_exam_question_results_attempt_id ON exam_question_results(exam_attempt_id);",
+        "CREATE INDEX IF NOT EXISTS idx_student_topic_res_student_id ON student_topic_resources(student_id);",
+        "CREATE INDEX IF NOT EXISTS idx_resources_owner ON resources(owner_type, owner_id);"
+    ]:
+        try:
+            cursor.execute(idx_sql)
+        except Exception:
+            pass
 
     conn.commit()
     conn.close()
