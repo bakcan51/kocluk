@@ -5074,27 +5074,56 @@ def get_message_contacts():
             unique_contacts[cid] = c
 
     enriched_contacts = []
-    for cid, c in unique_contacts.items():
-        cursor.execute("""
-        SELECT content, message_type, sent_at, sender_id, is_read
+    contact_ids = list(unique_contacts.keys())
+
+    if contact_ids:
+        placeholders = ', '.join(['?'] * len(contact_ids))
+
+        # 1. Bulk Last Message per Contact
+        q_last = f"""
+        SELECT partner_id, content, message_type, sent_at, sender_id, is_read
+        FROM (
+            SELECT 
+                CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS partner_id,
+                content, message_type, sent_at, sender_id, is_read,
+                ROW_NUMBER() OVER (
+                    PARTITION BY (CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END)
+                    ORDER BY sent_at DESC, id DESC
+                ) as rn
+            FROM messages
+            WHERE (sender_id = ? AND receiver_id IN ({placeholders}))
+               OR (receiver_id = ? AND sender_id IN ({placeholders}))
+        ) sub
+        WHERE rn = 1;
+        """
+        params_last = [user['id'], user['id'], user['id']] + contact_ids + [user['id']] + contact_ids
+        cursor.execute(q_last, tuple(params_last))
+        last_msg_map = {r['partner_id']: dict(r) for r in cursor.fetchall()}
+
+        # 2. Bulk Unread Messages Count per Contact
+        q_unread = f"""
+        SELECT sender_id, COUNT(*) as count
         FROM messages
-        WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
-        ORDER BY sent_at DESC LIMIT 1;
-        """, (user['id'], cid, cid, user['id']))
-        last_msg = cursor.fetchone()
+        WHERE receiver_id = ? AND sender_id IN ({placeholders}) AND COALESCE(is_read, 0) = 0
+        GROUP BY sender_id;
+        """
+        params_unread = [user['id']] + contact_ids
+        cursor.execute(q_unread, tuple(params_unread))
+        unread_map = {r['sender_id']: r['count'] for r in cursor.fetchall()}
 
-        cursor.execute("""
-        SELECT COUNT(*) as count FROM messages WHERE sender_id = ? AND receiver_id = ? AND is_read = 0;
-        """, (cid, user['id']))
-        unread = cursor.fetchone()['count']
+        for cid, c in unique_contacts.items():
+            last_msg = last_msg_map.get(cid)
+            unread = unread_map.get(cid, 0)
 
-        c['last_message'] = last_msg['content'] if last_msg else 'Henüz mesaj yok'
-        c['last_message_time'] = last_msg['sent_at'] if last_msg else None
-        c['last_message_type'] = last_msg['message_type'] if last_msg else 'TEXT'
-        c['unread_count'] = unread
-        c['is_online'] = True if (cid % 2 == 0) else False
+            c['last_message'] = last_msg['content'] if last_msg else 'Henüz mesaj yok'
+            c['last_message_time'] = last_msg['sent_at'] if last_msg else None
+            c['last_message_type'] = last_msg['message_type'] if last_msg else 'TEXT'
+            c['unread_count'] = unread
+            c['is_online'] = True if (cid % 2 == 0) else False
 
-        enriched_contacts.append(c)
+            enriched_contacts.append(c)
+    else:
+        enriched_contacts = []
 
     conn.close()
     return jsonify({'contacts': enriched_contacts, 'conversations': enriched_contacts})
@@ -5128,7 +5157,7 @@ def mark_conversation_as_read(with_user_id=None):
 
     if not with_user_id:
         data = request.json or {}
-        with_user_id = data.get('with_user_id') or data.get('sender_id')
+        with_user_id = data.get('with_user_id') or data.get('sender_id') or data.get('partner_id')
 
     if not with_user_id:
         return jsonify({'error': 'with_user_id gereklidir'}), 400
@@ -5242,10 +5271,11 @@ def handle_messages(with_user_id=None):
         notif_msg = f"💬 {sender_name} size yeni bir mesaj gönderdi."
         event_key = f"MESSAGE_{new_msg_id}_{receiver_id}"
         cursor.execute("""
-        INSERT OR IGNORE INTO notifications (
+        INSERT INTO notifications (
             recipient_user_id, actor_user_id, type, title, message, 
             entity_type, entity_id, event_key
-        ) VALUES (?, ?, 'MESSAGE_RECEIVED', '💬 Yeni Mesaj', ?, 'MESSAGE', ?, ?);
+        ) VALUES (?, ?, 'MESSAGE_RECEIVED', '💬 Yeni Mesaj', ?, 'MESSAGE', ?, ?)
+        ON CONFLICT DO NOTHING;
         """, (receiver_id, user['id'], notif_msg, new_msg_id, event_key))
 
         conn.commit()
