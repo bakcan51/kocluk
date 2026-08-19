@@ -6470,17 +6470,16 @@ def get_my_connected_students():
         conn.close()
         return jsonify({'students': students})
 
-    # COACH LOGIC
-    cursor.execute("SELECT id FROM coaches WHERE user_id = ?;", (user['id'],))
-    coach = cursor.fetchone()
-    if not coach:
-        conn.close()
-        return jsonify({'students': []})
-
-    coach_id = coach['id']
-
-    query = "SELECT s.*, u.name, u.email, u.phone, csr.id as rel_id, csr.relationship_type, csr.status as rel_status, csr.assigned_at FROM coach_student_relationships csr JOIN students s ON csr.student_id = s.id JOIN users u ON s.user_id = u.id WHERE csr.coach_id = ? AND u.status = 'ACTIVE' AND u.deleted_at IS NULL"
-    params = [coach_id]
+    # COACH LOGIC - DIRECT JOIN VIA coaches.user_id
+    query = """
+    SELECT s.*, u.name, u.email, u.phone, csr.id as rel_id, csr.relationship_type, csr.status as rel_status, csr.assigned_at 
+    FROM coach_student_relationships csr 
+    JOIN coaches c ON csr.coach_id = c.id
+    JOIN students s ON csr.student_id = s.id 
+    JOIN users u ON s.user_id = u.id 
+    WHERE c.user_id = ? AND u.status = 'ACTIVE' AND u.deleted_at IS NULL
+    """
+    params = [user['id']]
 
     if status_filter != 'ALL':
         query += " AND csr.status = ?"
@@ -6494,8 +6493,15 @@ def get_my_connected_students():
     cursor.execute(query, params)
     students = [dict(r) for r in cursor.fetchall()]
 
-    # Fetch pending connection requests
-    cursor.execute("SELECT csr.id as request_id, u.name as student_name, s.track, s.school, csr.relationship_type FROM coach_student_relationships csr JOIN students s ON csr.student_id = s.id JOIN users u ON s.user_id = u.id WHERE csr.coach_id = ? AND csr.status = 'PENDING';", (coach_id,))
+    # Fetch pending connection requests via direct coaches JOIN
+    cursor.execute("""
+    SELECT csr.id as request_id, u.name as student_name, s.track, s.school, csr.relationship_type 
+    FROM coach_student_relationships csr 
+    JOIN coaches c ON csr.coach_id = c.id
+    JOIN students s ON csr.student_id = s.id 
+    JOIN users u ON s.user_id = u.id 
+    WHERE c.user_id = ? AND csr.status = 'PENDING';
+    """, (user['id'],))
     pending_requests = [dict(r) for r in cursor.fetchall()]
 
     conn.close()
