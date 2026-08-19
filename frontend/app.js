@@ -812,7 +812,9 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
         } else if (viewName === 'notifications') {
             await renderNotificationsView();
         }
-        await updateGlobalUnreadBadge();
+        void updateGlobalUnreadBadge().catch(error => {
+            console.warn('Unread badge güncellenemedi:', error);
+        });
     } catch (err) {
         console.error(`View navigation error (${viewName}):`, err);
         container.innerHTML = `
