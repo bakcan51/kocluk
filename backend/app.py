@@ -5271,33 +5271,76 @@ def handle_messages(with_user_id=None):
             return jsonify({'error': 'Bu kullanıcıyla mesajlaşma veya konuşma görüntüleme yetkiniz bulunmuyor.'}), 403
 
         cursor.execute("UPDATE messages SET is_read = 1 WHERE sender_id = ? AND receiver_id = ? AND is_read = 0;", (other_user_id, user['id']))
-        conn.commit()
+        if cursor.rowcount and cursor.rowcount > 0:
+            conn.commit()
 
         cursor.execute("SELECT u.id, u.name, u.surname, u.role, u.email, s.track, s.school, c.title as coach_title FROM users u LEFT JOIN students s ON u.id = s.user_id LEFT JOIN coaches c ON u.id = c.user_id WHERE u.id = ?;", (other_user_id,))
         recipient_info = cursor.fetchone()
         recipient_dict = dict(recipient_info) if recipient_info else {'id': other_user_id, 'name': 'Kullanıcı', 'role': 'STUDENT'}
 
+        limit_param = request.args.get('limit')
+        offset_param = request.args.get('offset', 0)
+        limit = None
+        offset = 0
+        if limit_param is not None:
+            try:
+                limit = max(1, min(200, int(limit_param)))
+            except (ValueError, TypeError):
+                limit = 50
+        else:
+            limit = 50
+
+        if offset_param is not None:
+            try:
+                offset = max(0, int(offset_param))
+            except (ValueError, TypeError):
+                offset = 0
+
         if search_query:
             cursor.execute("""
-            SELECT m.*, u.name as sender_name, r.content as reply_content
-            FROM messages m
-            JOIN users u ON m.sender_id = u.id
-            LEFT JOIN messages r ON m.reply_to_id = r.id
-            WHERE ((m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?))
-              AND m.content LIKE ?
-            ORDER BY m.sent_at ASC;
+            SELECT COUNT(*) as count FROM messages
+            WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
+              AND content LIKE ?;
             """, (user['id'], other_user_id, other_user_id, user['id'], f"%{search_query}%"))
+            total_count_row = cursor.fetchone()
+            total_count = total_count_row['count'] if total_count_row else 0
+
+            cursor.execute("""
+            SELECT * FROM (
+                SELECT m.*, u.name as sender_name, r.content as reply_content
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                LEFT JOIN messages r ON m.reply_to_id = r.id
+                WHERE ((m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?))
+                  AND m.content LIKE ?
+                ORDER BY m.sent_at DESC, m.id DESC
+                LIMIT ? OFFSET ?
+            ) sub
+            ORDER BY sub.sent_at ASC, sub.id ASC;
+            """, (user['id'], other_user_id, other_user_id, user['id'], f"%{search_query}%", limit, offset))
         else:
             cursor.execute("""
-            SELECT m.*, u.name as sender_name, r.content as reply_content
-            FROM messages m
-            JOIN users u ON m.sender_id = u.id
-            LEFT JOIN messages r ON m.reply_to_id = r.id
-            WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?)
-            ORDER BY m.sent_at ASC;
+            SELECT COUNT(*) as count FROM messages
+            WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?);
             """, (user['id'], other_user_id, other_user_id, user['id']))
+            total_count_row = cursor.fetchone()
+            total_count = total_count_row['count'] if total_count_row else 0
+
+            cursor.execute("""
+            SELECT * FROM (
+                SELECT m.*, u.name as sender_name, r.content as reply_content
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                LEFT JOIN messages r ON m.reply_to_id = r.id
+                WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?)
+                ORDER BY m.sent_at DESC, m.id DESC
+                LIMIT ? OFFSET ?
+            ) sub
+            ORDER BY sub.sent_at ASC, sub.id ASC;
+            """, (user['id'], other_user_id, other_user_id, user['id'], limit, offset))
 
         msgs = [dict(r) for r in cursor.fetchall()]
+        has_more = (offset + len(msgs)) < total_count
 
         cursor.execute("""
         SELECT * FROM messages
@@ -5311,7 +5354,11 @@ def handle_messages(with_user_id=None):
         return jsonify({
             'messages': msgs,
             'pinned_messages': pinned_msgs,
-            'recipient': recipient_dict
+            'recipient': recipient_dict,
+            'total_count': total_count,
+            'has_more': has_more,
+            'limit': limit,
+            'offset': offset
         })
 
     elif request.method == 'POST':

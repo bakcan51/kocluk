@@ -3670,6 +3670,81 @@ async function sendNewModalMessage() {
     }
 }
 
+let currentMessageOffset = 0;
+let currentMessageHasMore = false;
+let currentMessageWithUserId = null;
+
+function renderMessageBubbleHtml(m) {
+    const isMe = m.sender_id === (currentUser ? currentUser.id : 0);
+    const timeStr = m.sent_at ? m.sent_at.substring(11, 16) : '';
+
+    if (['SYSTEM', 'RESOURCE', 'ASSIGNMENT', 'STUDY_PLAN'].includes(m.message_type)) {
+        return `
+        <div class="flex justify-center my-3 message-item" data-msg-id="${m.id}">
+            <div class="bg-indigo-950/70 border border-indigo-800/70 text-indigo-200 px-4 py-2.5 rounded-2xl text-xs flex items-center gap-3 shadow-md max-w-md text-center">
+                <i data-lucide="sparkles" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                <div class="text-left flex-1">
+                    <span class="font-semibold text-white block">${escapeHtml(m.content)}</span>
+                    <span class="text-[10px] text-indigo-400 block mt-0.5">${timeStr}</span>
+                </div>
+            </div>
+        </div>
+        `;
+    } else {
+        return `
+        <div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} group message-item" data-msg-id="${m.id}">
+            <div class="relative max-w-[80%] sm:max-w-[70%] p-3.5 rounded-2xl text-xs leading-relaxed ${isMe ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-br-none shadow-lg' : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-none shadow-md'}">
+                ${!isMe ? `<span class="font-bold text-[10px] text-indigo-300 block mb-1">${escapeHtml(m.sender_name)}</span>` : ''}
+                <p class="whitespace-pre-wrap">${escapeHtml(m.content)}</p>
+                <div class="flex items-center justify-end gap-1 text-[9px] opacity-75 mt-1.5">
+                    <span>${timeStr}</span>
+                    ${isMe ? `<span class="text-indigo-200 font-bold ml-0.5">${m.is_read ? '✓✓' : '✓'}</span>` : ''}
+                </div>
+            </div>
+        </div>
+        `;
+    }
+}
+
+async function loadOlderMessages(withUserId) {
+    const token = localStorage.getItem('yks_token');
+    const btn = document.querySelector('#loadOlderMsgContainer button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Yükleniyor...'; }
+    try {
+        const res = await fetch(`${API_BASE}/mesajlar?with_user_id=${withUserId}&limit=50&offset=${currentMessageOffset}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json();
+        const olderMsgs = data.messages || [];
+        if (olderMsgs.length > 0) {
+            currentMessageOffset += olderMsgs.length;
+            currentMessageHasMore = Boolean(data.has_more);
+            const box = document.getElementById('chatMessagesBox');
+            const oldScrollHeight = box ? box.scrollHeight : 0;
+            
+            const olderHtml = olderMsgs.map(m => renderMessageBubbleHtml(m)).join('');
+            const loadContainer = document.getElementById('loadOlderMsgContainer');
+            if (loadContainer) {
+                loadContainer.insertAdjacentHTML('afterend', olderHtml);
+                if (!currentMessageHasMore) {
+                    loadContainer.remove();
+                } else if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '⬆ Daha Eski Mesajları Yükle';
+                }
+            }
+            if (window.lucide) lucide.createIcons();
+            if (box) box.scrollTop = box.scrollHeight - oldScrollHeight;
+        } else {
+            const loadContainer = document.getElementById('loadOlderMsgContainer');
+            if (loadContainer) loadContainer.remove();
+        }
+    } catch (err) {
+        console.warn('Eski mesajlar yüklenemedi:', err);
+        if (btn) { btn.disabled = false; btn.textContent = 'Tekrar Dene'; }
+    }
+}
+
 async function renderMessagesView(targetUserId = null, searchQuery = "") {
     document.getElementById('pageTitle').textContent = "💬 Akıllı & Akademik Mesajlaşma Paneli";
     const container = document.getElementById('viewContainer');
@@ -3677,11 +3752,50 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
     activeMessageSearchQuery = searchQuery;
 
     try {
-        // 1. Fetch Contacts
-        const contactsRes = await fetch(`${API_BASE}/mesajlar/contacts`, {
+        let initialTargetId = targetUserId || currentMessageRecipientId;
+        if (!initialTargetId) {
+            const savedLastUser = localStorage.getItem('yks_last_message_user_id');
+            if (savedLastUser) {
+                try { initialTargetId = parseInt(savedLastUser); } catch(e) {}
+            }
+        }
+
+        let contactsPromise = fetch(`${API_BASE}/mesajlar/contacts`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (!contactsRes.ok) {
+
+        let msgs = [];
+        let pinnedMsgs = [];
+        let recipient = {};
+        let selectedUserId = initialTargetId;
+        let contactsRes = null;
+        let contactsData = null;
+
+        if (initialTargetId) {
+            let msgUrl = `${API_BASE}/mesajlar?with_user_id=${initialTargetId}&limit=50&offset=0`;
+            if (searchQuery) msgUrl += `&q=${encodeURIComponent(searchQuery)}`;
+            const messagesPromise = fetch(msgUrl, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            const [cRes, mRes] = await Promise.all([contactsPromise, messagesPromise]);
+            contactsRes = cRes;
+            if (mRes && mRes.ok) {
+                const data = await mRes.json();
+                msgs = data.messages || [];
+                pinnedMsgs = data.pinned_messages || [];
+                recipient = data.recipient || {};
+                currentMessageRecipientId = recipient.id || initialTargetId;
+                currentMessageWithUserId = currentMessageRecipientId;
+                currentMessageOffset = msgs.length;
+                currentMessageHasMore = Boolean(data.has_more);
+                localStorage.setItem('yks_last_message_user_id', currentMessageRecipientId);
+            }
+        } else {
+            contactsRes = await contactsPromise;
+        }
+
+        if (!contactsRes || !contactsRes.ok) {
             container.innerHTML = `
             <div class="glass-card p-12 text-center border border-slate-800 bg-[#111A2C] rounded-2xl my-6">
                 <i data-lucide="alert-circle" class="w-10 h-10 text-rose-400 mx-auto mb-3"></i>
@@ -3694,7 +3808,7 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
             return;
         }
 
-        const contactsData = await contactsRes.json();
+        contactsData = await contactsRes.json();
         let rawContacts = contactsData.contacts || contactsData.conversations || [];
 
         // Apply Tab Filter for Admin
@@ -3714,21 +3828,11 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
             );
         }
 
-        // Determine selected recipient ID
-        let selectedUserId = targetUserId || currentMessageRecipientId;
+        // Fallback if initialTargetId wasn't set or was invalid
         if (!selectedUserId && filteredContacts.length > 0) {
             selectedUserId = filteredContacts[0].user_id;
-        }
-
-        // 2. Fetch Messages for selected recipient
-        let msgs = [];
-        let pinnedMsgs = [];
-        let recipient = {};
-
-        if (selectedUserId) {
-            let msgUrl = `${API_BASE}/mesajlar?with_user_id=${selectedUserId}`;
+            let msgUrl = `${API_BASE}/mesajlar?with_user_id=${selectedUserId}&limit=50&offset=0`;
             if (searchQuery) msgUrl += `&q=${encodeURIComponent(searchQuery)}`;
-
             const msgRes = await fetch(msgUrl, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -3738,6 +3842,10 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
                 pinnedMsgs = data.pinned_messages || [];
                 recipient = data.recipient || {};
                 currentMessageRecipientId = recipient.id || selectedUserId;
+                currentMessageWithUserId = currentMessageRecipientId;
+                currentMessageOffset = msgs.length;
+                currentMessageHasMore = Boolean(data.has_more);
+                localStorage.setItem('yks_last_message_user_id', currentMessageRecipientId);
             }
         }
 
@@ -3863,6 +3971,13 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
 
                 <!-- CHAT MESSAGES BODY -->
                 <div id="chatMessagesBox" class="flex-1 p-5 overflow-y-auto space-y-4">
+                    ${currentMessageHasMore ? `
+                    <div id="loadOlderMsgContainer" class="text-center py-2">
+                        <button type="button" onclick="loadOlderMessages(${currentMessageRecipientId})" class="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 bg-indigo-950/60 border border-indigo-800/60 px-3 py-1 rounded-xl transition">
+                            ⬆ Daha Eski Mesajları Yükle
+                        </button>
+                    </div>
+                    ` : ''}
         `;
 
         if (msgs.length === 0) {
@@ -3874,37 +3989,7 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
             </div>
             `;
         } else {
-            msgs.forEach(m => {
-                const isMe = m.sender_id === (currentUser ? currentUser.id : 0);
-                const timeStr = m.sent_at ? m.sent_at.substring(11, 16) : '';
-
-                if (['SYSTEM', 'RESOURCE', 'ASSIGNMENT', 'STUDY_PLAN'].includes(m.message_type)) {
-                    html += `
-                    <div class="flex justify-center my-3">
-                        <div class="bg-indigo-950/70 border border-indigo-800/70 text-indigo-200 px-4 py-2.5 rounded-2xl text-xs flex items-center gap-3 shadow-md max-w-md text-center">
-                            <i data-lucide="sparkles" class="w-4 h-4 text-amber-400 shrink-0"></i>
-                            <div class="text-left flex-1">
-                                <span class="font-semibold text-white block">${escapeHtml(m.content)}</span>
-                                <span class="text-[10px] text-indigo-400 block mt-0.5">${timeStr}</span>
-                            </div>
-                        </div>
-                    </div>
-                    `;
-                } else {
-                    html += `
-                    <div class="flex flex-col ${isMe ? 'items-end' : 'items-start'} group">
-                        <div class="relative max-w-[80%] sm:max-w-[70%] p-3.5 rounded-2xl text-xs leading-relaxed ${isMe ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-br-none shadow-lg' : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-bl-none shadow-md'}">
-                            ${!isMe ? `<span class="font-bold text-[10px] text-indigo-300 block mb-1">${escapeHtml(m.sender_name)}</span>` : ''}
-                            <p class="whitespace-pre-wrap">${escapeHtml(m.content)}</p>
-                            <div class="flex items-center justify-end gap-1 text-[9px] opacity-75 mt-1.5">
-                                <span>${timeStr}</span>
-                                ${isMe ? `<span class="text-indigo-200 font-bold ml-0.5">${m.is_read ? '✓✓' : '✓'}</span>` : ''}
-                            </div>
-                        </div>
-                    </div>
-                    `;
-                }
-            });
+            html += msgs.map(m => renderMessageBubbleHtml(m)).join('');
         }
 
         html += `
