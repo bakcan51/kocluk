@@ -6827,18 +6827,14 @@ def handle_kaynak_havuzu():
         subject_id = request.args.get('subject_id')
         exam_system = request.args.get('exam_system')
         resource_type = request.args.get('resource_type')
+        raw_limit = request.args.get('limit')
+        raw_offset = request.args.get('offset', '0')
 
         # 1. Base Authorization Filter & Pool Isolation
         auth_where = "1=1"
         auth_params = []
 
         if user['role'] == 'COACH':
-            # Check if coach has an initialized pool; if not, initialize copy from Genel Havuz
-            cursor.execute("SELECT COUNT(*) as cnt FROM resources WHERE owner_type = 'COACH' AND owner_id = ?;", (coach_id,))
-            cnt_row = cursor.fetchone()
-            if not cnt_row or cnt_row['cnt'] == 0:
-                copy_system_resources_to_coach_pool(coach_id, cursor=cursor)
-
             auth_where = "(r.owner_type = 'COACH' AND r.owner_id = ?)"
             auth_params.append(coach_id)
         elif user['role'] == 'ADMIN':
@@ -6850,22 +6846,40 @@ def handle_kaynak_havuzu():
             auth_where = "r.id IN (SELECT resource_id FROM resource_assignments WHERE student_id = ? AND status = 'ACTIVE')"
             auth_params.append(st_id)
 
-        # Query ALL Authorized Resources for this User
-        raw_query = f"""
-        SELECT r.*, COALESCE(r.name, r.title) as name, s.name as subject_name,
-               (SELECT COUNT(*) FROM resource_topics rt WHERE rt.resource_id = r.id) as topic_count,
-               (SELECT COUNT(*) FROM resource_assignments ra WHERE ra.resource_id = r.id AND ra.status = 'ACTIVE' {"AND ra.coach_id = ?" if user['role'] == 'COACH' else ""}) as assigned_student_count
-        FROM resources r
-        LEFT JOIN subjects s ON r.subject_id = s.id
-        WHERE {auth_where}
-        ORDER BY r.id DESC;
-        """
-        raw_params = list(auth_params)
-        if user['role'] == 'COACH':
-            raw_params.append(coach_id)
+        def _fetch_resources():
+            raw_query = f"""
+            SELECT r.*, COALESCE(r.name, r.title) as name, s.name as subject_name,
+                   COALESCE(rt_agg.cnt, 0) as topic_count,
+                   COALESCE(ra_agg.cnt, 0) as assigned_student_count
+            FROM resources r
+            LEFT JOIN subjects s ON r.subject_id = s.id
+            LEFT JOIN (
+                SELECT resource_id, COUNT(*) as cnt
+                FROM resource_topics
+                GROUP BY resource_id
+            ) rt_agg ON rt_agg.resource_id = r.id
+            LEFT JOIN (
+                SELECT resource_id, COUNT(*) as cnt
+                FROM resource_assignments
+                WHERE status = 'ACTIVE' {"AND coach_id = ?" if user['role'] == 'COACH' else ""}
+                GROUP BY resource_id
+            ) ra_agg ON ra_agg.resource_id = r.id
+            WHERE {auth_where}
+            ORDER BY r.id DESC;
+            """
+            q_params = []
+            if user['role'] == 'COACH':
+                q_params.append(coach_id)
+            q_params.extend(auth_params)
+            cursor.execute(raw_query, q_params)
+            return [dict(row) for row in cursor.fetchall()]
 
-        cursor.execute(raw_query, raw_params)
-        all_authorized_rows = [dict(row) for row in cursor.fetchall()]
+        all_authorized_rows = _fetch_resources()
+
+        # If coach pool is totally empty, initialize from Genel Havuz on demand (0 overhead for normal requests)
+        if user['role'] == 'COACH' and len(all_authorized_rows) == 0:
+            copy_system_resources_to_coach_pool(coach_id, cursor=cursor)
+            all_authorized_rows = _fetch_resources()
 
         # 2. Compute exact KPIs over ALL Authorized Resources
         total_raw = len(all_authorized_rows)
@@ -6923,12 +6937,28 @@ def handle_kaynak_havuzu():
 
             filtered_resources.append(r)
 
+        total_filtered_count = len(filtered_resources)
+        has_more = False
+        limit_val = None
+        offset_val = 0
+
+        # Optional pagination support (Backwards compatible when limit is omitted)
+        if raw_limit is not None:
+            try:
+                limit_val = int(raw_limit)
+                offset_val = int(raw_offset)
+                paged_resources = filtered_resources[offset_val:offset_val + limit_val]
+                has_more = (offset_val + limit_val) < total_filtered_count
+                filtered_resources = paged_resources
+            except (ValueError, TypeError):
+                pass
+
         cursor.execute("SELECT id, name FROM subjects ORDER BY id ASC;")
         subjects_list = [dict(s) for s in cursor.fetchall()]
 
         conn.close()
 
-        return jsonify({
+        resp_data = {
             'resources': filtered_resources,
             'subjects': subjects_list,
             'kpis': {
@@ -6941,7 +6971,7 @@ def handle_kaynak_havuzu():
                 'currentCoachId': coach_id if user['role'] == 'COACH' else None,
                 'totalRawResources': total_raw,
                 'visibleResources': len(visible_non_archived),
-                'filteredResources': len(filtered_resources),
+                'filteredResources': total_filtered_count,
                 'activeResources': len(active_rows),
                 'archivedResources': len(archived_rows),
                 'assignedResources': len(assigned_resources_rows),
@@ -6951,7 +6981,15 @@ def handle_kaynak_havuzu():
                 'examSystemFilter': exam_system or 'ALL',
                 'resourceTypeFilter': resource_type or 'ALL'
             }
-        })
+        }
+
+        if raw_limit is not None:
+            resp_data['total'] = total_filtered_count
+            resp_data['limit'] = limit_val
+            resp_data['offset'] = offset_val
+            resp_data['has_more'] = has_more
+
+        return jsonify(resp_data)
 
     elif request.method == 'POST':
         if user['role'] not in ['COACH', 'ADMIN']:
