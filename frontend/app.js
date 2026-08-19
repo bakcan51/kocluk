@@ -79,7 +79,7 @@ function formatEnumLabel(enumVal) {
 
 // YKS KOÇLUK PLATFORMU - MASTER FRONTEND APPLICATION LOGIC
 
-const API_BASE = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') && window.location.port !== '5005' && window.location.port !== ''
+const API_BASE = (typeof window !== 'undefined' && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') && window.location.port !== '5005' && window.location.port !== '')
     ? "http://127.0.0.1:5005/api"
     : "/api";
 
@@ -91,6 +91,45 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+}
+
+// ============================================================
+// GLOBAL IN-FLIGHT GET REQUEST DEDUPLICATION (PROMISE SHARING)
+// ============================================================
+const _inFlightGetRequests = new Map();
+const _originalFetch = typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : null;
+
+if (typeof window !== 'undefined' && _originalFetch) {
+    window.fetch = function(input, init = {}) {
+        const method = (init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+        
+        // Only deduplicate idempotent GET requests
+        if (method === 'GET') {
+            const urlStr = typeof input === 'string' ? input : (input.url || input.toString());
+            
+            if (urlStr.includes('/api/')) {
+                const token = localStorage.getItem('yks_token') || '';
+                const inFlightKey = `${urlStr}::${token}`;
+                
+                if (_inFlightGetRequests.has(inFlightKey)) {
+                    return _inFlightGetRequests.get(inFlightKey).then(res => res.clone());
+                }
+                
+                const promise = _originalFetch(input, init).then(res => {
+                    _inFlightGetRequests.delete(inFlightKey);
+                    return res;
+                }).catch(err => {
+                    _inFlightGetRequests.delete(inFlightKey);
+                    throw err;
+                });
+                
+                _inFlightGetRequests.set(inFlightKey, promise);
+                return promise.then(res => res.clone());
+            }
+        }
+        
+        return _originalFetch(input, init);
+    };
 }
 
 /**
@@ -491,6 +530,7 @@ function checkAuth() {
 }
 
 function logout() {
+    stopGlobalUnreadBadgePolling();
     clearCoachStudentsCache();
     coachStudentsList = [];
     localStorage.removeItem('yks_token');
@@ -540,6 +580,7 @@ async function showApp() {
             if (typeof initNotificationSystem === 'function') {
                 initNotificationSystem();
             }
+            startGlobalUnreadBadgePolling();
         } catch (e) {
             console.error("Initial data load warning:", e);
         }
@@ -812,9 +853,6 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
         } else if (viewName === 'notifications') {
             await renderNotificationsView();
         }
-        void updateGlobalUnreadBadge().catch(error => {
-            console.warn('Unread badge güncellenemedi:', error);
-        });
     } catch (err) {
         console.error(`View navigation error (${viewName}):`, err);
         container.innerHTML = `
@@ -826,6 +864,21 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
     }
 }
 
+let _globalUnreadBadgeInterval = null;
+
+function startGlobalUnreadBadgePolling() {
+    if (_globalUnreadBadgeInterval) clearInterval(_globalUnreadBadgeInterval);
+    void updateGlobalUnreadBadge();
+    _globalUnreadBadgeInterval = setInterval(updateGlobalUnreadBadge, 60000);
+}
+
+function stopGlobalUnreadBadgePolling() {
+    if (_globalUnreadBadgeInterval) {
+        clearInterval(_globalUnreadBadgeInterval);
+        _globalUnreadBadgeInterval = null;
+    }
+}
+
 async function updateGlobalUnreadBadge() {
     try {
         const token = localStorage.getItem('yks_token');
@@ -833,6 +886,7 @@ async function updateGlobalUnreadBadge() {
         const res = await fetch(`${API_BASE}/mesajlar/unread-summary`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+        if (!res.ok) return;
         const data = await res.json();
         const count = data.total_unread || 0;
         const badgeEl = document.getElementById('sidebarUnreadBadge');
@@ -845,7 +899,7 @@ async function updateGlobalUnreadBadge() {
             }
         }
     } catch (e) {
-        console.error("Unread summary update error:", e);
+        console.warn("Unread summary update notice:", e);
     }
 }
 
