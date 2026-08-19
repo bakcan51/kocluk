@@ -7608,9 +7608,9 @@ async function calculateSimScore(e) {
     });
     const data = await res.json();
 
-    document.getElementById('resTytScore').textContent = data.tyt_score;
-    document.getElementById('resSayScore').textContent = data.yks_say_placement_score;
-    document.getElementById('resRank').textContent = `#${data.estimated_rank.toLocaleString()}`;
+    document.getElementById('resTytScore').textContent = Number(data.tyt_score).toFixed(3);
+    document.getElementById('resSayScore').textContent = Number(data.yks_say_placement_score).toFixed(3);
+    document.getElementById('resRank').textContent = `#${Number(data.estimated_rank).toLocaleString('tr-TR')}`;
     document.getElementById('simResultContainer').classList.remove('hidden');
 }
 

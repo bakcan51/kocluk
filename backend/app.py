@@ -1624,38 +1624,112 @@ def get_student_dashboard():
 # ==========================================
 # 5. YKS PUAN & SIRALAMA HESAPLAMA SİMÜLATÖRÜ API
 # ==========================================
+def _parse_sim_net(data, *keys, max_val=40.0):
+    for k in keys:
+        if k in data and data[k] is not None:
+            try:
+                val = float(data[k])
+                return max(0.0, min(max_val, val))
+            except (ValueError, TypeError):
+                pass
+    if 'tyt' in data and isinstance(data['tyt'], dict):
+        sub = data['tyt']
+        for k in keys:
+            if k in sub and sub[k] is not None:
+                try:
+                    return max(0.0, min(max_val, float(sub[k])))
+                except (ValueError, TypeError):
+                    pass
+        for prefix in ['turkce', 'mat', 'sosyal', 'fen']:
+            if any(prefix in k for k in keys):
+                d = float(sub.get(f'{prefix}_d', 0) or 0)
+                y = float(sub.get(f'{prefix}_y', 0) or 0)
+                if d or y:
+                    return max(0.0, min(max_val, d - (y / 4.0)))
+    return 0.0
+
+def _estimate_yks_say_ranking(yks_say_score):
+    import math
+    anchors = [
+        (560.0, 1),
+        (545.0, 250),
+        (530.0, 1500),
+        (515.0, 4200),
+        (500.0, 9500),
+        (480.0, 20000),
+        (450.0, 42000),
+        (420.0, 75000),
+        (380.0, 135000),
+        (340.0, 225000),
+        (300.0, 360000),
+        (260.0, 580000),
+        (220.0, 920000),
+        (180.0, 1400000),
+        (130.0, 1850000),
+        (100.0, 2200000)
+    ]
+    if yks_say_score >= anchors[0][0]:
+        return anchors[0][1]
+    if yks_say_score <= anchors[-1][0]:
+        return anchors[-1][1]
+    for i in range(len(anchors) - 1):
+        s_high, r_high = anchors[i]
+        s_low, r_low = anchors[i+1]
+        if s_low <= yks_say_score <= s_high:
+            t = (yks_say_score - s_low) / (s_high - s_low)
+            log_r = (1.0 - t) * math.log(r_low) + t * math.log(r_high)
+            return int(round(math.exp(log_r)))
+    return 150000
+
 @app.route('/api/simulasyon/puan-hesapla', methods=['POST'])
 def calculate_yks_score():
     data = request.json or {}
     
-    tyt_turkce = float(data.get('tyt_turkce', 0))
-    tyt_mat = float(data.get('tyt_mat', 0))
-    tyt_sosyal = float(data.get('tyt_sosyal', 0))
-    tyt_fen = float(data.get('tyt_fen', 0))
-    obp = float(data.get('obp', 80.0))
+    tyt_turkce = _parse_sim_net(data, 'tyt_turkce', 'tyt_turkce_net', 'turkce', max_val=40.0)
+    tyt_mat = _parse_sim_net(data, 'tyt_mat', 'tyt_mat_net', 'mat', 'matematik', max_val=40.0)
+    tyt_sosyal = _parse_sim_net(data, 'tyt_sosyal', 'tyt_sosyal_net', 'sosyal', max_val=20.0)
+    tyt_fen = _parse_sim_net(data, 'tyt_fen', 'tyt_fen_net', 'fen', max_val=20.0)
+    
+    raw_obp = 80.0
+    for k in ['obp', 'diploma_notu', 'obp_puan']:
+        if k in data and data[k] is not None:
+            try:
+                raw_obp = float(data[k])
+                break
+            except (ValueError, TypeError):
+                pass
+    if raw_obp > 100.0:
+        obp_diploma = max(50.0, min(100.0, raw_obp / 5.0))
+    else:
+        obp_diploma = max(50.0, min(100.0, raw_obp))
+    obp_katkisi = obp_diploma * 0.6
 
-    ayt_mat = float(data.get('ayt_mat', 0))
-    ayt_fizik = float(data.get('ayt_fizik', 0))
-    ayt_kimya = float(data.get('ayt_kimya', 0))
-    ayt_biyoloji = float(data.get('ayt_biyoloji', 0))
+    ayt_mat = _parse_sim_net(data, 'ayt_mat', 'ayt_mat_net', 'ayt_matematik', max_val=40.0)
+    ayt_fizik = _parse_sim_net(data, 'ayt_fizik', 'ayt_fizik_net', 'fizik', max_val=14.0)
+    ayt_kimya = _parse_sim_net(data, 'ayt_kimya', 'ayt_kimya_net', 'kimya', max_val=13.0)
+    ayt_biyoloji = _parse_sim_net(data, 'ayt_biyoloji', 'ayt_biyoloji_net', 'biyoloji', max_val=13.0)
 
-    # ÖSYM Standardized Weight Estimation Formula
+    # 1. ÖSYM TYT Ham Puanı (Taban: 100, Max: 500)
     tyt_score = 100.0 + (tyt_turkce * 3.3) + (tyt_mat * 3.3) + (tyt_sosyal * 3.4) + (tyt_fen * 3.4)
-    ayt_say_score = (tyt_score * 0.4) + ((ayt_mat * 3.0) + (ayt_fizik * 2.85) + (ayt_kimya * 3.07) + (ayt_biyoloji * 3.07)) * 0.6 + (obp * 0.6)
+    tyt_katkisi = max(0.0, tyt_score - 100.0) * 0.40  # Max: 160.0
 
-    # Estimated Rank Approximation Matrix
-    estimated_rank = 150000
-    if ayt_say_score >= 480: estimated_rank = 1200
-    elif ayt_say_score >= 450: estimated_rank = 5400
-    elif ayt_say_score >= 400: estimated_rank = 18500
-    elif ayt_say_score >= 350: estimated_rank = 42000
-    elif ayt_say_score >= 300: estimated_rank = 85000
+    # 2. ÖSYM AYT Sayısal Katkısı (Max: 240.0)
+    ayt_say_katkisi = (ayt_mat * 3.0) + (ayt_fizik * (45.6 / 14.0)) + (ayt_kimya * (37.2 / 13.0)) + (ayt_biyoloji * (37.2 / 13.0))
+    
+    # 3. YKS Sayısal Ham & Yerleştirme Puanı (Taban Ham: 100, Max Ham: 500, Max Yerleştirme: 560)
+    say_ham = 100.0 + tyt_katkisi + ayt_say_katkisi
+    yks_say_placement_score = say_ham + obp_katkisi
+
+    # 4. Kesintisiz Monotonik Sıralama Tahmini
+    estimated_rank = _estimate_yks_say_ranking(yks_say_placement_score)
 
     return jsonify({
         'tyt_score': round(tyt_score, 3),
-        'yks_say_placement_score': round(ayt_say_score, 3),
+        'yks_say_raw_score': round(say_ham, 3),
+        'yks_say_placement_score': round(yks_say_placement_score, 3),
         'estimated_rank': estimated_rank,
-        'obp_added': round(obp * 0.6, 2)
+        'obp_added': round(obp_katkisi, 2),
+        'say_placement_score': round(yks_say_placement_score, 3)
     })
 
 # ==========================================

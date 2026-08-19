@@ -491,6 +491,8 @@ function checkAuth() {
 }
 
 function logout() {
+    clearCoachStudentsCache();
+    coachStudentsList = [];
     localStorage.removeItem('yks_token');
     localStorage.removeItem('yks_user');
     sessionStorage.clear();
@@ -589,12 +591,57 @@ window.addEventListener('hashchange', () => {
     }
 });
 
-async function loadCoachStudentsList() {
+// ----------------------------------------------------
+// GLOBAL COACH STUDENTS MEMORY CACHE (SESSION-SCOPED)
+// ----------------------------------------------------
+let coachStudentsCache = null;
+let coachStudentsCacheUserId = null;
+
+async function getCoachStudents(forceRefresh = false) {
+    const currentUserId = currentUser ? currentUser.id : null;
+
+    // Invalidate if user changed
+    if (coachStudentsCacheUserId !== currentUserId) {
+        coachStudentsCache = null;
+        coachStudentsCacheUserId = currentUserId;
+    }
+
+    if (!forceRefresh && coachStudentsCache !== null) {
+        return coachStudentsCache;
+    }
+
     const token = localStorage.getItem('yks_token');
+    if (!token) return [];
+
     try {
-        const res = await fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } });
+        const res = await fetch(`${API_BASE}/students`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) {
+            console.warn("[STUDENTS CACHE] API returned status:", res.status);
+            return coachStudentsCache || [];
+        }
         const data = await res.json();
-        coachStudentsList = data.students || [];
+        const students = data.students || [];
+        coachStudentsCache = students;
+        coachStudentsList = students;
+        coachStudentsCacheUserId = currentUserId;
+        return students;
+    } catch (err) {
+        console.warn("[STUDENTS CACHE] Error:", err.message);
+        return coachStudentsCache || [];
+    }
+}
+
+function clearCoachStudentsCache() {
+    coachStudentsCache = null;
+    coachStudentsCacheUserId = null;
+}
+
+async function loadCoachStudentsList(forceRefresh = false) {
+    try {
+        const students = await getCoachStudents(forceRefresh);
+        coachStudentsList = students;
         
         const savedStId = localStorage.getItem('yks_selected_student_id');
         if (savedStId && coachStudentsList.find(s => s.id == savedStId)) {
@@ -603,8 +650,10 @@ async function loadCoachStudentsList() {
             const primaryStudent = coachStudentsList.find(s => s.id == 1) || coachStudentsList[0];
             selectedStudentId = primaryStudent.id;
         }
+        return students;
     } catch (err) {
         console.error("Coach students fetch error:", err);
+        return [];
     }
 }
 
@@ -1575,9 +1624,8 @@ async function renderStudentDetailView(studentId, planId = null) {
     console.log('[STUDENT DETAIL LOAD]', { routeStudentId: studentId, selectedStudentId });
 
     try {
-        const resSt = await fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } });
-        const dataSt = await resSt.json();
-        const student = (dataSt.students || []).find(s => s.id == selectedStudentId);
+        const students = await getCoachStudents();
+        const student = students.find(s => s.id == selectedStudentId);
 
         const container = document.getElementById('viewContainer');
         if (!student) {
@@ -6450,9 +6498,7 @@ async function renderAdminDashboard() {
     const token = localStorage.getItem('yks_token');
 
     try {
-        const resSt = await fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } });
-        const dataSt = await resSt.json();
-        const allStudents = dataSt.students || [];
+        const allStudents = await getCoachStudents();
 
         const resCo = await fetch(`${API_BASE}/rel/coaches-search`, { headers: { 'Authorization': `Bearer ${token}` } });
         const dataCo = await resCo.json();
@@ -7479,6 +7525,7 @@ async function adminAssignCoach(e) {
         const data = await res.json();
         if (res.ok) {
             alert("⚡️ " + data.message);
+            clearCoachStudentsCache();
             renderAdminDashboard();
         } else {
             alert(data.error || "Eşleştirme yapılamadı");
@@ -7608,9 +7655,9 @@ async function calculateSimScore(e) {
     });
     const data = await res.json();
 
-    document.getElementById('resTytScore').textContent = data.tyt_score;
-    document.getElementById('resSayScore').textContent = data.yks_say_placement_score;
-    document.getElementById('resRank').textContent = `#${data.estimated_rank.toLocaleString()}`;
+    document.getElementById('resTytScore').textContent = Number(data.tyt_score).toFixed(3);
+    document.getElementById('resSayScore').textContent = Number(data.yks_say_placement_score).toFixed(3);
+    document.getElementById('resRank').textContent = `#${Number(data.estimated_rank).toLocaleString('tr-TR')}`;
     document.getElementById('simResultContainer').classList.remove('hidden');
 }
 
@@ -7959,7 +8006,8 @@ async function submitNewStudent(e) {
         if (!res.ok) throw new Error(data.error || 'Öğrenci kaydı oluşturulamadı.');
 
         showStudentCredentialsCard(data.username || username, data.initial_password || password);
-        await loadCoachStudentsList();
+        clearCoachStudentsCache();
+        await loadCoachStudentsList(true);
     } catch (err) {
         if (errDiv) {
             errDiv.textContent = "❌ " + (err.message || 'Öğrenci kaydı sırasında hata oluştu.');
@@ -8022,11 +8070,8 @@ function copyToClipboard(text) {
 }
 
 async function openStudentAccountManagementModal(studentId) {
-    const token = localStorage.getItem('yks_token');
     try {
-        const res = await fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } });
-        const data = await res.json();
-        const students = data.students || [];
+        const students = await getCoachStudents();
         const student = students.find(s => s.id == studentId);
         if (!student) return alert("Öğrenci bulunamadı.");
 
@@ -8049,55 +8094,72 @@ async function openStudentAccountManagementModal(studentId) {
                 <button onclick="closeModal()" class="text-slate-400 hover:text-white p-1">✕</button>
             </div>
 
-            <!-- SECTION 1: RESET PASSWORD -->
-            <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 space-y-3">
-                <h4 class="text-xs font-black text-white flex items-center gap-2">
-                    <span>🔑</span> YENİ PAROLA BELİRLE
+            <!-- TAB / SECTION 1: RESET PASSWORD -->
+            <div class="p-4 border border-slate-800 bg-slate-900/60 rounded-xl space-y-3">
+                <h4 class="font-bold text-white flex items-center gap-2">
+                    🔑 Şifre Sıfırlama / Yeni Şifre Belirleme
                 </h4>
+                <p class="text-[11px] text-slate-400">Öğrenci için yeni bir şifre tanımlayabilir veya otomatik geçici bir şifre üretebilirsiniz.</p>
                 <form onsubmit="submitCoachResetPassword(event, ${student.id})" class="space-y-2">
-                    <div class="grid grid-cols-2 gap-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
-                            <label class="block text-slate-400 font-bold mb-1">Yeni Parola</label>
-                            <input type="password" id="mResetPw" required placeholder="En az 6 karakter" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-semibold">
+                            <label class="block text-[10px] text-slate-400 mb-1">Yeni Şifre</label>
+                            <input type="password" id="mResetPw" required minlength="6" placeholder="En az 6 karakter"
+                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
                         </div>
                         <div>
-                            <label class="block text-slate-400 font-bold mb-1">Yeni Parola Tekrar</label>
-                            <input type="password" id="mResetPwConfirm" required placeholder="Tekrar girin" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-semibold">
+                            <label class="block text-[10px] text-slate-400 mb-1">Yeni Şifre (Tekrar)</label>
+                            <input type="password" id="mResetPwConfirm" required minlength="6" placeholder="Tekrar yazın"
+                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
                         </div>
                     </div>
-                    <div class="flex items-center justify-between pt-1">
-                        <button type="button" onclick="generateTempPasswordForStudent(${student.id})" class="px-3 py-2 rounded-xl bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-800 font-bold text-[10px] transition">
-                            ⚡ Geçici Parola Oluştur
+                    <div class="flex items-center justify-between pt-2 gap-2">
+                        <button type="button" onclick="generateTempPasswordForStudent(${student.id})"
+                            class="px-3 py-2 rounded-lg bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900 transition font-bold text-[11px] flex items-center gap-1.5">
+                            ⚡ Otomatik Geçici Şifre Üret
                         </button>
-                        <button type="submit" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black shadow-md transition">
-                            PAROLAYI GÜNCELLE
+                        <button type="submit"
+                            class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition">
+                            Şifreyi Güncelle
                         </button>
                     </div>
                 </form>
             </div>
 
-            <!-- SECTION 2: CHANGE USERNAME -->
-            <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 space-y-3">
-                <h4 class="text-xs font-black text-white flex items-center gap-2">
-                    <span>👤</span> KULLANICI ADINI DEĞİŞTİR
+            <!-- TAB / SECTION 2: USERNAME CHANGE -->
+            <div class="p-4 border border-slate-800 bg-slate-900/60 rounded-xl space-y-3">
+                <h4 class="font-bold text-white flex items-center gap-2">
+                    👤 Kullanıcı Adını Değiştir
                 </h4>
+                <p class="text-[11px] text-slate-400">Giriş için kullanılan kullanıcı adını buradan düzenleyebilirsiniz.</p>
                 <form onsubmit="submitCoachUpdateUsername(event, ${student.id})" class="flex items-center gap-2">
-                    <input type="text" id="mNewUsername" required value="${student.username}" placeholder="Yeni kullanıcı adı" class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold text-indigo-300">
-                    <button type="submit" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold transition whitespace-nowrap">
-                        GÜNCELLE
+                    <input type="text" id="mNewUsername" required value="${student.username}"
+                        class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500">
+                    <button type="submit" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold text-[11px] transition">
+                        Kaydet
                     </button>
                 </form>
             </div>
 
-            <!-- SECTION 3: ACCOUNT STATUS -->
-            <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 flex items-center justify-between">
-                <div>
-                    <h4 class="text-xs font-black text-white">HESAP DURUMU</h4>
-                    <p class="text-[10px] text-slate-400">Pasif yapılan öğrenciler sisteme giriş yapamaz.</p>
+            <!-- TAB / SECTION 3: ACCOUNT STATUS TOGGLE -->
+            <div class="p-4 border border-slate-800 bg-slate-900/60 rounded-xl space-y-3">
+                <h4 class="font-bold text-white flex items-center gap-2">
+                    🛡️ Hesap Durumu (Aktif / Pasif)
+                </h4>
+                <p class="text-[11px] text-slate-400">Pasife alınan öğrenci sisteme giriş yapamaz. İstediğiniz zaman tekrar aktif edebilirsiniz.</p>
+                <div class="flex items-center justify-between pt-1">
+                    <span class="text-slate-300 font-medium">Mevcut Durum: ${statusBadge}</span>
+                    ${student.user_status === 'ACTIVE'
+                        ? `<button type="button" onclick="toggleStudentAccountStatus(${student.id}, 'PASSIVE')"
+                            class="px-4 py-2 rounded-lg bg-rose-950 text-rose-300 border border-rose-800 hover:bg-rose-900 transition font-bold text-[11px]">
+                            ⛔ Hesabı Dondur (Pasif Yap)
+                           </button>`
+                        : `<button type="button" onclick="toggleStudentAccountStatus(${student.id}, 'ACTIVE')"
+                            class="px-4 py-2 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 transition font-bold text-[11px]">
+                            ✅ Hesabı Yeniden Aktif Et
+                           </button>`
+                    }
                 </div>
-                <button onclick="toggleStudentAccountStatus(${student.id}, '${student.user_status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'}')" class="px-4 py-2 rounded-xl font-bold transition text-xs ${student.user_status === 'ACTIVE' ? 'bg-rose-950 text-rose-300 border border-rose-800 hover:bg-rose-900' : 'bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900'}">
-                    ${student.user_status === 'ACTIVE' ? '🔒 Hesabı Pasifleştir' : '🔓 Hesabı Aktifleştir'}
-                </button>
             </div>
         </div>
         `;
@@ -8536,9 +8598,7 @@ async function renderStudentsRiskListView(filter = 'ALL') {
     }
 
     try {
-        const data = await apiFetch('/students');
-        const students = data.students || [];
-        coachStudentsList = students;
+        const students = await getCoachStudents();
 
         let filtered = students;
         if (filter !== 'ALL') {
@@ -8849,26 +8909,10 @@ async function renderWeeklyProgramView(studentId = null) {
     try {
         endpoint = `${API_BASE}/weekly-program?student_id=${weeklyActiveStudentId}&week_start=${weeklyCurrentWeekStart}`;
 
-        // Parallelize students and weekly-program requests
+        // Parallelize cached students and weekly-program requests
         const isCoachRole = currentUser && currentUser.role !== 'STUDENT';
         const fetchStudentsPromise = isCoachRole
-            ? fetch(`${API_BASE}/students`, { 
-                headers: { 'Authorization': `Bearer ${token}` },
-                signal: controller.signal
-            })
-            .then(async r => {
-                if (r.ok) {
-                    const ct = r.headers.get("content-type") || "";
-                    if (ct.includes("application/json")) {
-                        return await r.json();
-                    }
-                }
-                return { students: [] };
-            })
-            .catch(e => {
-                console.warn("[WEEKLY PROGRAM] Students fetch warning:", e.message);
-                return { students: [] };
-            })
+            ? getCoachStudents().then(st => ({ students: st }))
             : Promise.resolve({ students: [] });
 
         const fetchProgramPromise = fetch(endpoint, {
@@ -10366,11 +10410,7 @@ async function renderMufredatView(targetStudentId = null) {
     // ====================================================
     if (!mufredatActiveStudentId && currentUser && ['COACH', 'ADMIN'].includes(currentUser.role)) {
         try {
-            const res = await fetch(`${API_BASE}/students`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const data = await res.json();
-            const studentsList = data.students || [];
+            const studentsList = await getCoachStudents();
 
             let html = `
             <div class="space-y-6 text-xs max-w-5xl mx-auto">
@@ -10971,20 +11011,7 @@ async function renderStudentAssignmentsView() {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const fetchStudentsPromise = isCoachRole
-            ? fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } })
-                .then(async r => {
-                    if (r.ok) {
-                        const ct = r.headers.get("content-type") || "";
-                        if (ct.includes("application/json")) {
-                            return await r.json();
-                        }
-                    }
-                    return { students: [] };
-                })
-                .catch(e => {
-                    console.warn("[ASSIGNMENTS] Students fetch warning:", e.message);
-                    return { students: [] };
-                })
+            ? getCoachStudents().then(st => ({ students: st }))
             : Promise.resolve({ students: [] });
 
         const [res, dataSt] = await Promise.all([
@@ -11462,9 +11489,7 @@ async function submitModalCompleteAssignment(assignmentId) {
 async function openCreateAssignmentModal() {
     const token = localStorage.getItem('yks_token');
     try {
-        const resSt = await fetch(`${API_BASE}/students`, { headers: { 'Authorization': `Bearer ${token}` } });
-        const dataSt = await resSt.json();
-        const students = dataSt.students || [];
+        const students = await getCoachStudents();
 
         const resSub = await fetch(`${API_BASE}/mufredat/konular`, { headers: { 'Authorization': `Bearer ${token}` } });
         const dataSub = await resSub.json();
@@ -12315,6 +12340,7 @@ async function changeStudentField(studentId, newField) {
             body: JSON.stringify({ field: newField, track: newField })
         });
         if (res.ok) {
+            clearCoachStudentsCache();
             renderMufredatView(studentId);
         } else {
             alert("Alan değiştirilemedi.");
