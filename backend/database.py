@@ -216,11 +216,11 @@ def get_pg_pool():
                 if db_url and PSYCOPG2_AVAILABLE:
                     try:
                         _pg_pool = psycopg2.pool.ThreadedConnectionPool(
-                            minconn=1,
+                            minconn=5,
                             maxconn=10,
                             dsn=db_url
                         )
-                        print("✓ PostgreSQL ThreadedConnectionPool initialized successfully (min=1, max=10).")
+                        print("✓ PostgreSQL ThreadedConnectionPool initialized successfully (min=5, max=10).")
                     except Exception as e:
                         print(f"⚠️ PostgreSQL ThreadedConnectionPool initialization warning: {e}")
                         _pg_pool = None
