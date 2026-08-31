@@ -10,7 +10,15 @@
     "test:visual": "venv/bin/python3 scratch/mobile_qa/run_mobile_qa.py --mode visual || python3 scratch/mobile_qa/run_mobile_qa.py --mode visual",
     "test:mobile:full": "venv/bin/python3 scratch/mobile_qa/run_mobile_qa.py --mode full || python3 scratch/mobile_qa/run_mobile_qa.py --mode full"
   },
-  "keywords": ["yks", "lgs", "mobile-qa", "responsive"],
+  "keywords": [
+    "yks",
+    "lgs",
+    "mobile-qa",
+    "responsive"
+  ],
   "author": "Antigravity Agent",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
 }

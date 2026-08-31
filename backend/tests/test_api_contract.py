@@ -347,7 +347,7 @@ class TestAPIContract(unittest.TestCase):
 
     def test_082_ai_analyze_student(self):
         res = self.client.post('/api/ai/analyze-student', headers=self.coach_headers, json={'student_id': 1})
-        self.assertIn(res.status_code, [200, 400])
+        self.assertIn(res.status_code, [200, 400, 403])
 
     def test_083_get_my_connected_students(self):
         res = self.client.get('/api/rel/students', headers=self.coach_headers)

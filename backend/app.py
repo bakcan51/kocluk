@@ -34,6 +34,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 from database import get_db, DB_PATH, init_db, ensure_lgs_seeded, is_postgres
+from telemetry import telemetry
 
 frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend'))
 if not os.path.exists(frontend_dir):
@@ -42,7 +43,13 @@ if not os.path.exists(frontend_dir):
     frontend_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
 app = Flask(__name__, static_folder=frontend_dir, static_url_path="")
-app.secret_key = "yks_kocluk_super_secret_key_2027"
+env_secret = os.environ.get("SECRET_KEY")
+is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("ENV") == "production" or os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+
+if is_production and not env_secret:
+    raise RuntimeError("CRITICAL CONFIGURATION ERROR: SECRET_KEY environment variable must be set in production mode!")
+
+app.secret_key = env_secret or "yks_kocluk_super_secret_key_2027"
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 try:
@@ -119,13 +126,43 @@ def close_db_connection(exception=None):
 @app.before_request
 def start_perf_timer():
     g.start_time = time.time()
+    g.request_id = request.headers.get('X-Request-ID') or telemetry.generate_request_id()
+    g.pool_acquire_ms = 0.0
+    g.sql_time_ms = 0.0
+    g.sql_queries_count = 0
 
 @app.after_request
 def log_perf_timing(response):
     if hasattr(g, 'start_time'):
-        duration_ms = round((time.time() - g.start_time) * 1000, 1)
-        print(f"[PERF] {request.method} {request.path} {response.status_code} {duration_ms}ms")
+        duration_ms = (time.time() - g.start_time) * 1000.0
+        req_id = getattr(g, 'request_id', 'req_unknown')
+        pool_ms = getattr(g, 'pool_acquire_ms', 0.0)
+        sql_ms = getattr(g, 'sql_time_ms', 0.0)
+        sql_cnt = getattr(g, 'sql_queries_count', 0)
+
+        response.headers['X-Request-ID'] = req_id
+
+        telemetry.record_request(
+            request_id=req_id,
+            endpoint=request.path,
+            method=request.method,
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+            pool_acquire_ms=pool_ms,
+            sql_time_ms=sql_ms,
+            sql_count=sql_cnt
+        )
+        print(f"[PERF] [{req_id}] {request.method} {request.path} {response.status_code} {round(duration_ms, 1)}ms (SQL: {round(sql_ms, 1)}ms / {sql_cnt}q)")
     return response
+
+@app.route('/api/admin/telemetry', methods=['GET'])
+def get_admin_telemetry():
+    user = get_auth_user()
+    if not user:
+        return jsonify({'error': 'Yetkisiz erişim'}), 401
+    if user.get('role') != 'ADMIN':
+        return jsonify({'error': 'Sadece sistem yöneticileri telemetri verilerine erişebilir.'}), 403
+    return jsonify(telemetry.get_metrics_summary()), 200
 
 DAY_NAME_MAP = {
     1: 'Pazartesi', 2: 'Salı', 3: 'Çarşamba', 4: 'Perşembe', 5: 'Cuma', 6: 'Cumartesi', 7: 'Pazar',
@@ -253,12 +290,15 @@ def send_auto_notification(sender_user_id, receiver_user_id, content, message_ty
     except Exception as e:
         print(f"Error sending auto notification: {e}")
 
-# CORS setup
+# CORS and Cache Control setup
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     return response
 
 # Serve static frontend files
@@ -365,6 +405,54 @@ def create_academic_event(event_type, actor_user_id, recipient_user_id, entity_t
             conn.close()
         return None
 
+import hmac
+import hashlib
+import base64
+
+def generate_jwt_token(user_id, role, username, expires_in_seconds=86400*7):
+    header = {"alg": "HS256", "typ": "JWT"}
+    payload = {
+        "sub": user_id,
+        "user_id": user_id,
+        "role": role,
+        "username": username,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + expires_in_seconds
+    }
+    header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip('=')
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+    sig_raw = hmac.new(
+        app.secret_key.encode(),
+        f"{header_b64}.{payload_b64}".encode(),
+        hashlib.sha256
+    ).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig_raw).decode().rstrip('=')
+    return f"{header_b64}.{payload_b64}.{sig_b64}"
+
+def verify_jwt_token(token):
+    if not token or not isinstance(token, str):
+        return None
+    if '.' not in token:
+        return token
+    try:
+        parts = token.split('.')
+        if len(parts) != 3:
+            return None
+        header_b64, payload_b64, sig_b64 = parts
+        expected_sig = base64.urlsafe_b64encode(
+            hmac.new(app.secret_key.encode(), f"{header_b64}.{payload_b64}".encode(), hashlib.sha256).digest()
+        ).decode().rstrip('=')
+        if not hmac.compare_digest(sig_b64, expected_sig):
+            return None
+        payload_pad = payload_b64 + '=' * (-len(payload_b64) % 4)
+        payload_json = base64.urlsafe_b64decode(payload_pad).decode()
+        payload = json.loads(payload_json)
+        if payload.get('exp') and payload['exp'] < int(time.time()):
+            return None
+        return payload.get('user_id') or payload.get('sub')
+    except Exception as e:
+        return None
+
 # Helper: Get current user from token/header
 def get_auth_user():
     # 1. Check request-scope cache in Flask g
@@ -377,7 +465,8 @@ def get_auth_user():
     if not auth_header:
         return None
     try:
-        token = auth_header.replace('Bearer ', '').strip()
+        raw_token = auth_header.replace('Bearer ', '').strip()
+        verified_token = verify_jwt_token(raw_token) or raw_token
         conn = get_db()
         cursor = conn.cursor()
 
@@ -392,7 +481,7 @@ def get_auth_user():
         WHERE (u.id = ? OR u.username = ?) AND u.status = 'ACTIVE'
         LIMIT 1;
         """
-        cursor.execute(query, (token, token))
+        cursor.execute(query, (str(verified_token), str(verified_token)))
         row = cursor.fetchone()
         conn.close()
 
@@ -524,7 +613,7 @@ def login():
             user_dict['coach_info'] = dict(co)
             user_dict['coach_id'] = co['id']
 
-    token = str(user_dict['id'])
+    token = generate_jwt_token(user_dict['id'], user_dict['role'], user_dict['username'])
     log_activity(user_dict['id'], user_dict['role'], 'LOGIN', 'users', user_dict['id'], {'username': user_dict['username']}, cursor=cursor)
 
     conn.close()
@@ -623,6 +712,10 @@ def handle_students():
     cursor = conn.cursor()
 
     if request.method == 'GET':
+        if user['role'] == 'STUDENT':
+            conn.close()
+            return jsonify({'error': 'Bu işlem için koç veya yönetici yetkisi gereklidir.'}), 403
+
         if user['role'] == 'COACH':
             cursor.execute("""
             SELECT DISTINCT s.*, u.name, u.surname, u.username, u.email, u.status as user_status, u.last_login_at
@@ -2851,12 +2944,62 @@ def handle_assignments(path_assignment_id=None):
         raw_assignments = []
         for r in cursor.fetchall():
             item = dict(r)
-            # Dynamically evaluate LATE status without mutating the database
+            if item.get('due_date'):
+                if hasattr(item['due_date'], 'strftime'):
+                    item['due_date'] = item['due_date'].strftime('%Y-%m-%d')
+                else:
+                    item['due_date'] = str(item['due_date'])[:10]
+            # Dynamically evaluate LATE/OVERDUE status without mutating the database
             curr_st = item.get('status')
             due_d = item.get('due_date')
             if curr_st not in ('COMPLETED', 'CANCELLED', 'SUBMITTED') and due_d and str(due_d) < today_str:
-                item['status'] = 'LATE'
+                item['status'] = 'OVERDUE'
             raw_assignments.append(item)
+
+        # Query linked weekly programs for scheduling metadata and student ownership isolation
+        asg_ids = [item['id'] for item in raw_assignments if item.get('id')]
+        wp_links_by_asg = {}
+        if asg_ids:
+            placeholders = ','.join(['?'] * len(asg_ids))
+            cursor.execute(f"""
+            SELECT wp.id, wp.assignment_id, wp.student_id, wp.date, wp.start_time, wp.end_time, 
+                   COALESCE(wp.completion_status, wp.status, 'PLANLANDI') as status
+            FROM weekly_programs wp
+            WHERE wp.assignment_id IN ({placeholders})
+            ORDER BY wp.date ASC, wp.start_time ASC;
+            """, asg_ids)
+            for wp_row in cursor.fetchall():
+                aid = wp_row['assignment_id']
+                if aid not in wp_links_by_asg:
+                    wp_links_by_asg[aid] = []
+                wp_links_by_asg[aid].append(dict(wp_row))
+
+        for item in raw_assignments:
+            aid = item['id']
+            st_id = item['student_id']
+            # Filter links strictly to matching student_id (Security Isolation)
+            matching_links = [l for l in wp_links_by_asg.get(aid, []) if l['student_id'] == st_id]
+            if matching_links:
+                active_slot = next((l for l in matching_links if l['status'] in ('DEVAM_EDIYOR', 'IN_PROGRESS')), None)
+                if not active_slot:
+                    active_slot = next((l for l in matching_links if l['status'] in ('PLANLANDI', 'PLANNED')), matching_links[0])
+                
+                item['is_scheduled'] = True
+                item['program_id'] = active_slot['id']
+                p_date = active_slot['date']
+                item['program_date'] = p_date.strftime('%Y-%m-%d') if hasattr(p_date, 'strftime') else str(p_date)[:10] if p_date else None
+                item['program_start_time'] = active_slot['start_time']
+                item['program_end_time'] = active_slot['end_time']
+                item['program_status'] = active_slot['status']
+                item['program_count'] = len(matching_links)
+            else:
+                item['is_scheduled'] = False
+                item['program_id'] = None
+                item['program_date'] = None
+                item['program_start_time'] = None
+                item['program_end_time'] = None
+                item['program_status'] = None
+                item['program_count'] = 0
 
         # Compute Stats Summary from total unfiltered assignments
         total_cnt = len(raw_assignments)
@@ -2880,6 +3023,8 @@ def handle_assignments(path_assignment_id=None):
         if status_filter != 'ALL':
             if status_filter == 'PENDING':
                 filtered_items = [i for i in filtered_items if i['status'] in ('PENDING', 'ASSIGNED')]
+            elif status_filter == 'OVERDUE':
+                filtered_items = [i for i in filtered_items if i['status'] in ('OVERDUE', 'LATE')]
             else:
                 filtered_items = [i for i in filtered_items if i['status'] == status_filter]
 
@@ -2967,6 +3112,13 @@ def handle_assignments(path_assignment_id=None):
             SET status = 'COMPLETED', completed_count = COALESCE(?, target_question_count), submission_note = COALESCE(?, submission_note), completed_at = CURRENT_TIMESTAMP
             WHERE id = ?;
             """, (completed_count, submission_note, assignment_id))
+
+            # STATUS SYNC: Assignment -> Weekly Program
+            cursor.execute("""
+            UPDATE weekly_programs
+            SET status = 'TAMAMLANDI', completion_status = 'TAMAMLANDI', updated_at = CURRENT_TIMESTAMP
+            WHERE assignment_id = ?;
+            """, (assignment_id,))
             
             # Send Notification to Coach if student completed
             if user['role'] == 'STUDENT':
@@ -4306,7 +4458,9 @@ def get_weekly_program():
 
     try:
         student_id = int(student_id)
-    except (ValueError, TypeError):
+        if student_id > 2147483647 or student_id <= 0:
+            return jsonify({'error': 'Geçersiz öğrenci ID'}), 400
+    except (ValueError, TypeError, OverflowError):
         return jsonify({'error': 'Geçersiz öğrenci ID'}), 400
 
     week_start = request.args.get('week_start')
@@ -4336,6 +4490,11 @@ def get_weekly_program():
             conn.close()
             return jsonify({'error': 'Öğrenci bulunamadı'}), 404
 
+        if user['role'] == 'COACH':
+            if not check_coach_owns_student(cursor, user, student_id):
+                conn.close()
+                return jsonify({'error': 'Bu öğrencinin programına erişim yetkiniz bulunmuyor.'}), 403
+
         # Role filter: Students only see PUBLISHED items. Coaches/Admins see DRAFT and PUBLISHED.
         if user['role'] == 'STUDENT':
             pub_filter = " AND COALESCE(wp.publication_status, 'PUBLISHED') = 'PUBLISHED'"
@@ -4346,6 +4505,7 @@ def get_weekly_program():
         SELECT wp.id, wp.student_id, wp.created_by_coach_id, wp.date, wp.day_of_week, 
                wp.start_time, wp.end_time, wp.title, wp.subject_id, s.name as subject_name,
                wp.curriculum_topic_id, c.topic as topic_name, wp.resource_id, r.title as resource_title,
+               wp.assignment_id, a.title as assignment_title, a.status as assignment_status,
                wp.study_type, wp.description, 
                COALESCE(wp.completion_status, wp.status, 'PLANLANDI') as status,
                COALESCE(wp.completion_status, wp.status, 'PLANLANDI') as completion_status,
@@ -4355,6 +4515,7 @@ def get_weekly_program():
         LEFT JOIN subjects s ON wp.subject_id = s.id
         LEFT JOIN curriculum c ON wp.curriculum_topic_id = c.id
         LEFT JOIN resources r ON wp.resource_id = r.id
+        LEFT JOIN assignments a ON wp.assignment_id = a.id
         WHERE wp.student_id = ? AND wp.date BETWEEN ? AND ? {pub_filter}
         ORDER BY wp.date ASC, wp.start_time ASC;
         """
@@ -4420,11 +4581,23 @@ def create_weekly_program():
     status = data.get('status', data.get('completion_status', 'PLANLANDI'))
     publication_status = data.get('publication_status', 'DRAFT')
 
+    raw_assignment_id = data.get('assignment_id')
+    assignment_id = None
+
     if not student_id or not prog_date or not start_time or not end_time or not title:
         return jsonify({'error': 'Öğrenci, tarih, saat ve başlık zorunludur'}), 400
 
     conn = get_db()
     cursor = conn.cursor()
+
+    if raw_assignment_id:
+        try:
+            aid = int(raw_assignment_id)
+            cursor.execute("SELECT id FROM assignments WHERE id = ? AND student_id = ?;", (aid, student_id))
+            if cursor.fetchone():
+                assignment_id = aid
+        except (ValueError, TypeError):
+            assignment_id = None
 
     # 1. Exact Same Time Slot Check (Seamless Upsert / Update without False Conflict)
     cursor.execute("""
@@ -4436,9 +4609,9 @@ def create_weekly_program():
     if exact_match:
         cursor.execute("""
         UPDATE weekly_programs 
-        SET title = ?, subject_id = ?, curriculum_topic_id = ?, resource_id = ?, study_type = ?, description = ?, status = ?, completion_status = ?, publication_status = ?, updated_at = CURRENT_TIMESTAMP
+        SET title = ?, subject_id = ?, curriculum_topic_id = ?, resource_id = ?, assignment_id = ?, study_type = ?, description = ?, status = ?, completion_status = ?, publication_status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?;
-        """, (title, subject_id, curriculum_topic_id, resource_id, study_type, description, status, status, publication_status, exact_match['id']))
+        """, (title, subject_id, curriculum_topic_id, resource_id, assignment_id, study_type, description, status, status, publication_status, exact_match['id']))
         conn.commit()
         prog_id = exact_match['id']
         log_activity(user['id'], user['role'], 'UPDATE_WEEKLY_PROGRAM', 'weekly_programs', prog_id, {'title': title, 'date': prog_date, 'student_id': student_id}, cursor=cursor)
@@ -4463,9 +4636,9 @@ def create_weekly_program():
     coach_id = user.get('coach_id')
 
     cursor.execute("""
-    INSERT INTO weekly_programs (student_id, created_by_coach_id, date, day_of_week, start_time, end_time, title, subject_id, curriculum_topic_id, resource_id, study_type, description, status, completion_status, publication_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    """, (student_id, coach_id, prog_date, day_of_week, start_time, end_time, title, subject_id, curriculum_topic_id, resource_id, study_type, description, status, status, publication_status))
+    INSERT INTO weekly_programs (student_id, created_by_coach_id, date, day_of_week, start_time, end_time, title, subject_id, curriculum_topic_id, resource_id, assignment_id, study_type, description, status, completion_status, publication_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    """, (student_id, coach_id, prog_date, day_of_week, start_time, end_time, title, subject_id, curriculum_topic_id, resource_id, assignment_id, study_type, description, status, status, publication_status))
     
     prog_id = cursor.lastrowid
 
@@ -4524,6 +4697,17 @@ def update_weekly_program(prog_id):
     status = data.get('status', data.get('completion_status', item['status']))
     publication_status = data.get('publication_status', item['publication_status'] if 'publication_status' in item.keys() and item['publication_status'] else 'DRAFT')
 
+    raw_assignment_id = data.get('assignment_id', item['assignment_id'] if 'assignment_id' in item.keys() else None)
+    assignment_id = None
+    if raw_assignment_id:
+        try:
+            aid = int(raw_assignment_id)
+            cursor.execute("SELECT id FROM assignments WHERE id = ? AND student_id = ?;", (aid, item['student_id']))
+            if cursor.fetchone():
+                assignment_id = aid
+        except (ValueError, TypeError):
+            assignment_id = None
+
     # Time Overlap Check on move/resize (excluding current item)
     if prog_date != item['date'] or start_time != item['start_time'] or end_time != item['end_time']:
         cursor.execute("""
@@ -4543,9 +4727,9 @@ def update_weekly_program(prog_id):
     cursor.execute("""
     UPDATE weekly_programs 
     SET date = ?, day_of_week = ?, start_time = ?, end_time = ?, title = ?, subject_id = ?, 
-        curriculum_topic_id = ?, resource_id = ?, study_type = ?, description = ?, status = ?, completion_status = ?, publication_status = ?, updated_at = CURRENT_TIMESTAMP
+        curriculum_topic_id = ?, resource_id = ?, assignment_id = ?, study_type = ?, description = ?, status = ?, completion_status = ?, publication_status = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?;
-    """, (prog_date, day_of_week, start_time, end_time, title, subject_id, curriculum_topic_id, resource_id, study_type, description, status, status, publication_status, prog_id))
+    """, (prog_date, day_of_week, start_time, end_time, title, subject_id, curriculum_topic_id, resource_id, assignment_id, study_type, description, status, status, publication_status, prog_id))
     
     conn.commit()
     log_activity(user['id'], user['role'], 'UPDATE_WEEKLY_PROGRAM', 'weekly_programs', prog_id, {'title': title, 'date': prog_date})
@@ -4723,7 +4907,7 @@ def update_weekly_program_status(prog_id):
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT wp.title, wp.student_id, s.user_id as student_user_id, s.coach_id, u.name as student_name, u.surname as student_surname
+    SELECT wp.title, wp.student_id, wp.assignment_id, s.user_id as student_user_id, s.coach_id, u.name as student_name, u.surname as student_surname
     FROM weekly_programs wp
     JOIN students s ON wp.student_id = s.id
     JOIN users u ON s.user_id = u.id
@@ -4733,6 +4917,16 @@ def update_weekly_program_status(prog_id):
 
     cursor.execute("UPDATE weekly_programs SET status = ?, completion_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;", (new_status, new_status, prog_id))
     
+    # STATUS SYNC: Program -> Assignment
+    if wp_info and wp_info['assignment_id']:
+        aid = wp_info['assignment_id']
+        if new_status in ('TAMAMLANDI', 'COMPLETED'):
+            cursor.execute("UPDATE assignments SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP WHERE id = ?;", (aid,))
+        elif new_status in ('DEVAM_EDIYOR', 'IN_PROGRESS'):
+            cursor.execute("UPDATE assignments SET status = 'IN_PROGRESS' WHERE id = ? AND status NOT IN ('COMPLETED', 'SUBMITTED');", (aid,))
+        elif new_status in ('PLANLANDI', 'PLANNED'):
+            cursor.execute("UPDATE assignments SET status = 'PENDING' WHERE id = ? AND status NOT IN ('COMPLETED', 'SUBMITTED');", (aid,))
+
     if wp_info and user['role'] == 'STUDENT' and new_status in ('TAMAMLANDI', 'COMPLETED'):
         cursor.execute("SELECT user_id FROM coaches WHERE id = ?;", (wp_info['coach_id'],))
         ch_row = cursor.fetchone()
@@ -5034,7 +5228,7 @@ def get_topic_cross_resource_detail():
     })
 
 # ==========================================
-# 15. KİTAP OKUMA TAKİBİ API
+# 15. KİTAP OKUMA & KÜTÜPHANE YÖNETİMİ API
 # ==========================================
 @app.route('/api/kitaplar', methods=['GET', 'POST'])
 def handle_books():
@@ -5046,49 +5240,440 @@ def handle_books():
     cursor = conn.cursor()
 
     if request.method == 'GET':
-        student_id = request.args.get('student_id')
-        if not student_id and user['role'] == 'STUDENT':
-            cursor.execute("SELECT id FROM students WHERE user_id = ?;", (user['id'],))
-            st = cursor.fetchone()
-            student_id = st['id'] if st else 1
-        if not student_id:
-            student_id = 1
+        req_st_id = request.args.get('student_id')
+        student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, req_st_id)
+        if err_resp:
+            conn.close()
+            return err_resp, err_code
 
-        cursor.execute("SELECT * FROM books WHERE student_id = ? ORDER BY start_date DESC;", (student_id,))
+        # 1. Fetch Books
+        cursor.execute("""
+        SELECT b.*,
+               (SELECT MAX(session_date) FROM reading_logs WHERE book_id = b.id) as last_session_date
+        FROM books b
+        WHERE b.student_id = ? 
+        ORDER BY 
+            CASE b.status 
+                WHEN 'IN_PROGRESS' THEN 1 
+                WHEN 'TO_READ' THEN 2 
+                WHEN 'COMPLETED' THEN 3 
+                ELSE 4 
+            END, 
+            b.id DESC;
+        """, (student_id,))
         rows = cursor.fetchall()
         books = []
         for r in rows:
             d = dict(r)
-            # Ensure both total_pages and page_count keys are present for 100% frontend compatibility
-            d['page_count'] = d.get('total_pages', 0)
+            total = int(d.get('total_pages') or d.get('page_count') or 0)
+            read_p = int(d.get('read_pages') or d.get('current_page') or 0)
+            d['total_pages'] = total
+            d['page_count'] = total
+            d['read_pages'] = read_p
+            d['current_page'] = read_p
+            d['percentage'] = min(100, int((read_p / total * 100))) if total > 0 else 0
+            d['genre'] = d.get('genre') or 'Genel'
+            d['status'] = d.get('status') or 'IN_PROGRESS'
+            d['rating_stars'] = int(d.get('rating_stars') or 5)
+            d['last_read_date'] = d.get('last_session_date') or d.get('finish_date') or None
             books.append(d)
+
+        # 2. Compute Reading Statistics
+        total_books_read = sum(1 for b in books if b.get('status') == 'COMPLETED')
+        total_pages_read = sum(b.get('read_pages', 0) for b in books)
+        active_reading_count = sum(1 for b in books if b.get('status') == 'IN_PROGRESS')
+
+        # Weekly & Monthly logs from reading_logs table
+        cursor.execute("""
+        SELECT 
+            COALESCE(SUM(pages_read), 0) as weekly_pages,
+            COALESCE(SUM(duration_minutes), 0) as weekly_minutes
+        FROM reading_logs 
+        WHERE student_id = ? AND session_date >= DATE('now', '-7 days');
+        """, (student_id,))
+        weekly_stat = cursor.fetchone()
+        weekly_pages = int(weekly_stat['weekly_pages']) if weekly_stat else 0
+        weekly_minutes = int(weekly_stat['weekly_minutes']) if weekly_stat else 0
+
+        cursor.execute("""
+        SELECT 
+            COALESCE(SUM(pages_read), 0) as total_log_pages,
+            COALESCE(SUM(duration_minutes), 0) as total_log_minutes
+        FROM reading_logs 
+        WHERE student_id = ?;
+        """, (student_id,))
+        total_stat = cursor.fetchone()
+        total_reading_minutes = int(total_stat['total_log_minutes']) if total_stat else 0
+
+        # Daily breakdown for current week (last 7 days)
+        cursor.execute("""
+        SELECT DATE(session_date) as log_day, COALESCE(SUM(pages_read), 0) as day_pages, COALESCE(SUM(duration_minutes), 0) as day_minutes
+        FROM reading_logs
+        WHERE student_id = ? AND session_date >= DATE('now', '-6 days')
+        GROUP BY DATE(session_date)
+        ORDER BY log_day ASC;
+        """, (student_id,))
+        daily_rows = {dict(r)['log_day']: dict(r) for r in cursor.fetchall()}
+
+        from datetime import datetime, timedelta
+        daily_breakdown = []
+        today = datetime.now().date()
+        for i in range(6, -1, -1):
+            d = today - timedelta(days=i)
+            d_str = d.strftime('%Y-%m-%d')
+            day_name = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'][d.weekday()]
+            log_item = daily_rows.get(d_str, {'day_pages': 0, 'day_minutes': 0})
+            daily_breakdown.append({
+                'date': d_str,
+                'day_name': day_name,
+                'pages': log_item.get('day_pages', 0),
+                'minutes': log_item.get('day_minutes', 0)
+            })
+
+        # Calculate Reading Streak
+        cursor.execute("""
+        SELECT DISTINCT DATE(session_date) as s_date 
+        FROM reading_logs 
+        WHERE student_id = ? 
+        ORDER BY s_date DESC;
+        """, (student_id,))
+        streak_dates = [dict(r)['s_date'] for r in cursor.fetchall()]
+        streak = 0
+        check_date = today
+        # If no reading today yet, allow streak from yesterday
+        if streak_dates and streak_dates[0] == (today - timedelta(days=1)).strftime('%Y-%m-%d'):
+            check_date = today - timedelta(days=1)
+        for s_str in streak_dates:
+            if s_str == check_date.strftime('%Y-%m-%d'):
+                streak += 1
+                check_date -= timedelta(days=1)
+            else:
+                break
+
+        # 3. Monthly Goals
+        now = datetime.now()
+        cursor.execute("""
+        SELECT * FROM reading_goals 
+        WHERE student_id = ? AND year = ? AND month = ?;
+        """, (student_id, now.year, now.month))
+        goal_row = cursor.fetchone()
+        if goal_row:
+            target_books = int(goal_row['target_books_count'])
+            target_pages = int(goal_row['target_pages_monthly'])
+        else:
+            target_books = 2
+            target_pages = 400
+
+        # Completed this month (Cross-database date range)
+        start_of_month = f"{now.year:04d}-{now.month:02d}-01"
+        next_month = now.month + 1 if now.month < 12 else 1
+        next_year = now.year if now.month < 12 else now.year + 1
+        start_of_next_month = f"{next_year:04d}-{next_month:02d}-01"
+
+        cursor.execute("""
+        SELECT COALESCE(SUM(pages_read), 0) as month_pages 
+        FROM reading_logs 
+        WHERE student_id = ? AND session_date >= ? AND session_date < ?;
+        """, (student_id, start_of_month, start_of_next_month))
+        m_row = cursor.fetchone()
+        month_pages = int(m_row['month_pages']) if m_row else 0
+
+        # Recent Reading Sessions
+        cursor.execute("""
+        SELECT rl.*, b.title as book_title, b.author as book_author
+        FROM reading_logs rl
+        JOIN books b ON rl.book_id = b.id
+        WHERE rl.student_id = ?
+        ORDER BY rl.session_date DESC, rl.id DESC
+        LIMIT 10;
+        """, (student_id,))
+        recent_sessions = [dict(r) for r in cursor.fetchall()]
+
+        stats = {
+            'total_books_read': total_books_read,
+            'total_pages_read': total_pages_read,
+            'active_reading_count': active_reading_count,
+            'weekly_pages_read': weekly_pages,
+            'weekly_minutes_read': weekly_minutes,
+            'total_reading_minutes': total_reading_minutes,
+            'reading_streak_days': streak,
+            'daily_breakdown': daily_breakdown
+        }
+
+        goals = {
+            'target_books_count': target_books,
+            'target_pages_monthly': target_pages,
+            'completed_pages_this_month': month_pages,
+            'completed_books_this_month': total_books_read,
+            'month_name': ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'][now.month - 1]
+        }
+
         conn.close()
-        return jsonify({'books': books})
+        return jsonify({
+            'books': books,
+            'stats': stats,
+            'goals': goals,
+            'recent_sessions': recent_sessions
+        })
 
     elif request.method == 'POST':
         data = request.json or {}
-        student_id = data.get('student_id', 1)
-        if not student_id and user['role'] == 'STUDENT':
-            cursor.execute("SELECT id FROM students WHERE user_id = ?;", (user['id'],))
-            st = cursor.fetchone()
-            student_id = st['id'] if st else 1
-        if not student_id:
-            student_id = 1
+        req_st_id = data.get('student_id')
+        student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, req_st_id)
+        if err_resp:
+            conn.close()
+            return err_resp, err_code
 
         title = (data.get('title') or data.get('name') or 'Kitap').strip()
         author = (data.get('author') or '').strip()
-        total_pages = int(data.get('total_pages') or data.get('page_count') or 0)
-        read_pages = int(data.get('read_pages') or 0)
-        rating_stars = int(data.get('rating_stars') or 5)
+        genre = (data.get('genre') or 'Genel').strip()
+        notes = (data.get('notes') or '').strip()
+        target_finish_date = data.get('target_finish_date') or None
+
+        try:
+            total_pages = int(data.get('total_pages') or data.get('page_count') or 0)
+        except (ValueError, TypeError):
+            total_pages = 0
+        try:
+            read_pages = int(data.get('read_pages') or data.get('current_page') or 0)
+        except (ValueError, TypeError):
+            read_pages = 0
+        try:
+            rating_stars = int(data.get('rating_stars') or 5)
+        except (ValueError, TypeError):
+            rating_stars = 5
+
+        status = data.get('status') or ('COMPLETED' if read_pages >= total_pages and total_pages > 0 else 'IN_PROGRESS')
 
         cursor.execute("""
-        INSERT INTO books (student_id, title, author, total_pages, read_pages, rating_stars, status, start_date)
-        VALUES (?, ?, ?, ?, ?, ?, 'IN_PROGRESS', DATE('now'));
-        """, (student_id, title, author, total_pages, read_pages, rating_stars))
+        INSERT INTO books (student_id, title, author, total_pages, read_pages, rating_stars, genre, notes, target_finish_date, status, start_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, DATE('now'));
+        """, (student_id, title, author, total_pages, read_pages, rating_stars, genre, notes, target_finish_date, status))
+
+        book_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Kitap başarıyla eklendi!', 'book_id': book_id}), 201
+
+
+@app.route('/api/kitaplar/<int:book_id>', methods=['PUT', 'DELETE'])
+def handle_book_detail(book_id):
+    user = get_auth_user()
+    if not user:
+        return jsonify({'error': 'Yetkisiz erişim'}), 401
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM books WHERE id = ?;", (book_id,))
+    book = cursor.fetchone()
+    if not book:
+        conn.close()
+        return jsonify({'error': 'Kitap bulunamadı'}), 404
+
+    book_dict = dict(book)
+    student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, book_dict['student_id'])
+    if err_resp:
+        conn.close()
+        return err_resp, err_code
+
+    if request.method == 'DELETE':
+        cursor.execute("DELETE FROM reading_logs WHERE book_id = ?;", (book_id,))
+        cursor.execute("DELETE FROM books WHERE id = ?;", (book_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Kitap başarıyla silindi'})
+
+    elif request.method == 'PUT':
+        data = request.json or {}
+        title = (data.get('title') or book_dict.get('title')).strip()
+        author = (data.get('author') or book_dict.get('author') or '').strip()
+        genre = (data.get('genre') or book_dict.get('genre') or 'Genel').strip()
+        notes = data.get('notes') if 'notes' in data else book_dict.get('notes')
+        coach_feedback = data.get('coach_feedback') if 'coach_feedback' in data else book_dict.get('coach_feedback')
+        target_finish_date = data.get('target_finish_date') if 'target_finish_date' in data else book_dict.get('target_finish_date')
+
+        try:
+            total_pages = int(data.get('total_pages') if 'total_pages' in data else book_dict.get('total_pages', 0))
+        except (ValueError, TypeError):
+            total_pages = int(book_dict.get('total_pages', 0))
+
+        try:
+            read_pages = int(data.get('read_pages') if 'read_pages' in data else book_dict.get('read_pages', 0))
+        except (ValueError, TypeError):
+            read_pages = int(book_dict.get('read_pages', 0))
+
+        try:
+            rating_stars = int(data.get('rating_stars') if 'rating_stars' in data else book_dict.get('rating_stars', 5))
+        except (ValueError, TypeError):
+            rating_stars = int(book_dict.get('rating_stars', 5))
+
+        status = data.get('status') or book_dict.get('status', 'IN_PROGRESS')
+        finish_date = book_dict.get('finish_date')
+
+        if read_pages >= total_pages and total_pages > 0:
+            status = 'COMPLETED'
+            if not finish_date:
+                finish_date = datetime.now().strftime('%Y-%m-%d')
+        elif status != 'COMPLETED':
+            finish_date = None
+
+        cursor.execute("""
+        UPDATE books 
+        SET title = ?, author = ?, total_pages = ?, read_pages = ?,
+            rating_stars = ?, genre = ?, notes = ?, coach_feedback = ?, target_finish_date = ?, status = ?, finish_date = ?
+        WHERE id = ?;
+        """, (title, author, total_pages, read_pages, rating_stars, genre, notes, coach_feedback, target_finish_date, status, finish_date, book_id))
 
         conn.commit()
         conn.close()
-        return jsonify({'message': 'Kitap başarıyla eklendi!'})
+        return jsonify({'message': 'Kitap güncellendi!'})
+
+
+@app.route('/api/kitaplar/<int:book_id>/log', methods=['POST'])
+def log_reading_session(book_id):
+    user = get_auth_user()
+    if not user:
+        return jsonify({'error': 'Yetkisiz erişim'}), 401
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM books WHERE id = ?;", (book_id,))
+    book = cursor.fetchone()
+    if not book:
+        conn.close()
+        return jsonify({'error': 'Kitap bulunamadı'}), 404
+
+    book_dict = dict(book)
+    student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, book_dict['student_id'])
+    if err_resp:
+        conn.close()
+        return err_resp, err_code
+
+    data = request.json or {}
+    start_page = max(0, int(data.get('start_page') or book_dict.get('read_pages') or 0))
+    end_page = int(data.get('end_page') or 0)
+    pages_read = int(data.get('pages_read') or 0)
+    duration_minutes = max(1, int(data.get('duration_minutes') or 0))
+    notes = (data.get('notes') or '').strip()
+
+    total_pages = max(0, int(book_dict.get('total_pages') or 0))
+    if end_page <= 0 and pages_read > 0:
+        end_page = start_page + pages_read
+
+    # Strict clamping
+    if total_pages > 0:
+        end_page = min(total_pages, max(0, end_page))
+        start_page = min(total_pages, max(0, start_page))
+    else:
+        end_page = max(0, end_page)
+        start_page = max(0, start_page)
+
+    actual_pages_read = max(0, end_page - start_page) if end_page >= start_page else pages_read
+
+    new_read_pages = max(int(book_dict.get('read_pages') or 0), end_page)
+    if total_pages > 0:
+        new_read_pages = min(total_pages, max(0, new_read_pages))
+    else:
+        new_read_pages = max(0, new_read_pages)
+
+    new_status = 'COMPLETED' if (total_pages > 0 and new_read_pages >= total_pages) else 'IN_PROGRESS'
+
+    cursor.execute("""
+    INSERT INTO reading_logs (book_id, student_id, start_page, end_page, pages_read, duration_minutes, notes, session_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+    """, (book_id, student_id, start_page, end_page, actual_pages_read, duration_minutes, notes))
+
+    cursor.execute("""
+    UPDATE books 
+    SET read_pages = ?, status = ?, finish_date = CASE WHEN ? = 'COMPLETED' THEN DATE('now') ELSE finish_date END
+    WHERE id = ?;
+    """, (new_read_pages, new_status, new_status, book_id))
+
+    conn.commit()
+    conn.close()
+    return jsonify({
+        'message': 'Okuma oturumu başarıyla kaydedildi!',
+        'pages_read': actual_pages_read,
+        'new_read_pages': new_read_pages,
+        'status': new_status
+    }), 201
+
+
+@app.route('/api/kitaplar/goals', methods=['GET', 'POST'])
+def handle_reading_goals():
+    user = get_auth_user()
+    if not user:
+        return jsonify({'error': 'Yetkisiz erişim'}), 401
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    from datetime import datetime
+    now = datetime.now()
+
+    if request.method == 'GET':
+        req_st_id = request.args.get('student_id')
+        student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, req_st_id)
+        if err_resp:
+            conn.close()
+            return err_resp, err_code
+
+        cursor.execute("SELECT * FROM reading_goals WHERE student_id = ? AND year = ? AND month = ?;", (student_id, now.year, now.month))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return jsonify(dict(row))
+        return jsonify({'student_id': student_id, 'target_books_count': 2, 'target_pages_monthly': 400, 'year': now.year, 'month': now.month})
+
+    elif request.method == 'POST':
+        data = request.json or {}
+        req_st_id = data.get('student_id')
+        student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, req_st_id)
+        if err_resp:
+            conn.close()
+            return err_resp, err_code
+
+        target_books = int(data.get('target_books_count') or 2)
+        target_pages = int(data.get('target_pages_monthly') or 400)
+
+        cursor.execute("""
+        INSERT INTO reading_goals (student_id, target_books_count, target_pages_monthly, year, month, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(student_id, year, month) DO UPDATE SET
+            target_books_count = excluded.target_books_count,
+            target_pages_monthly = excluded.target_pages_monthly,
+            updated_at = CURRENT_TIMESTAMP;
+        """, (student_id, target_books, target_pages, now.year, now.month))
+
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Okuma hedefleri güncellendi!'})
+
+
+@app.route('/api/kitaplar/<int:book_id>/coach-feedback', methods=['POST'])
+def save_book_coach_feedback(book_id):
+    user = get_auth_user()
+    if not user or user.get('role') not in ('COACH', 'ADMIN'):
+        return jsonify({'error': 'Bu işlem için koç veya yönetici yetkisi gereklidir.'}), 403
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM books WHERE id = ?;", (book_id,))
+    book = cursor.fetchone()
+    if not book:
+        conn.close()
+        return jsonify({'error': 'Kitap bulunamadı'}), 404
+
+    data = request.json or {}
+    feedback = (data.get('feedback') or data.get('coach_feedback') or '').strip()
+
+    cursor.execute("UPDATE books SET coach_feedback = ? WHERE id = ?;", (feedback, book_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Koç geri bildirimi kaydedildi!'})
 
 # ==========================================
 # 16. MESAJLAŞMA & KİŞİ LİSTESİ API
@@ -5726,7 +6311,10 @@ def get_reports_analytics():
     if not user:
         return jsonify({'error': 'Yetkisiz erişim'}), 401
 
-    student_id = request.args.get('student_id')
+    user_role = user['role']
+    user_id = user['id']
+    coach_id = user.get('coach_id', 0)
+    student_id_param = request.args.get('student_id')
     preset = request.args.get('preset', '3_MONTHS')
     start_date_arg = request.args.get('start_date')
     end_date_arg = request.args.get('end_date')
@@ -5735,10 +6323,43 @@ def get_reports_analytics():
     conn = get_db()
     cursor = conn.cursor()
 
-    student_id, err_resp, err_code = resolve_and_verify_student_id(cursor, user, student_id)
-    if err_resp:
-        conn.close()
-        return err_resp, err_code
+    # 1. Resolve Target Student ID
+    target_student_id = None
+    if user_role == 'STUDENT':
+        target_student_id = user.get('student_id')
+        if not target_student_id:
+            cursor.execute("SELECT id FROM students WHERE user_id = ? LIMIT 1;", (user_id,))
+            st_row = cursor.fetchone()
+            if not st_row:
+                conn.close()
+                return jsonify({'error': 'Öğrenci profili bulunamadı.'}), 404
+            target_student_id = st_row['id']
+    elif student_id_param and str(student_id_param).strip() not in ('ALL', 'null', 'undefined', ''):
+        try:
+            target_student_id = int(student_id_param)
+        except (TypeError, ValueError):
+            target_student_id = None
+
+    if target_student_id is None:
+        if user_role == 'ADMIN':
+            cursor.execute("SELECT id FROM students ORDER BY id ASC LIMIT 1;")
+            r = cursor.fetchone()
+            target_student_id = r['id'] if r else 1
+        elif user_role == 'COACH':
+            cursor.execute("""
+            SELECT s.id FROM students s
+            WHERE s.coach_id = ? OR s.created_by_coach_id = ?
+               OR EXISTS (SELECT 1 FROM coach_students cs WHERE cs.student_id = s.id AND cs.coach_id = ?)
+               OR EXISTS (SELECT 1 FROM coach_student_relationships csr WHERE csr.student_id = s.id AND csr.coach_id = ? AND csr.status = 'ACTIVE')
+            ORDER BY s.id ASC LIMIT 1;
+            """, (coach_id, coach_id, coach_id, coach_id))
+            r = cursor.fetchone()
+            if not r:
+                conn.close()
+                return jsonify({'error': 'Atanmış öğrenciniz bulunmuyor.'}), 404
+            target_student_id = r['id']
+
+    student_id = target_student_id
 
     date_clause = ""
     params = []
@@ -5769,15 +6390,25 @@ def get_reports_analytics():
         params.append(start_date_arg)
         params.append(end_date_arg)
 
-    query_params = list(params)
-    query_params.append(student_id)
-
-    cursor.execute(f"""
+    # 2. CONSOLIDATED QUERY 1: Auth + BOLA + Student Profile + Exam Attempts in Single RTT
+    # Using EXISTS subqueries to prevent any row multiplication / Cartesian product
+    query_sql = f"""
     SELECT 
         s.id as student_id, s.user_id, s.exam_system as student_exam_system, s.track, s.target_university, s.target_department,
         u.name, u.surname,
         ea.id as attempt_id, ea.exam_system as attempt_exam_system, ea.exam_type, ea.exam_name, ea.publisher, 
-        ea.exam_date, ea.duration_minutes, ea.total_net, ea.status
+        ea.exam_date, ea.duration_minutes, ea.total_net, ea.status,
+        CASE 
+            WHEN ? = 'ADMIN' THEN 1
+            WHEN ? = 'STUDENT' AND s.user_id = ? THEN 1
+            WHEN ? = 'COACH' AND (
+                s.coach_id = ? 
+                OR s.created_by_coach_id = ? 
+                OR EXISTS (SELECT 1 FROM coach_students cs WHERE cs.student_id = s.id AND cs.coach_id = ?)
+                OR EXISTS (SELECT 1 FROM coach_student_relationships csr WHERE csr.student_id = s.id AND csr.coach_id = ? AND csr.status = 'ACTIVE')
+            ) THEN 1
+            ELSE 0
+        END as is_authorized
     FROM students s
     JOIN users u ON s.user_id = u.id
     LEFT JOIN exam_attempts ea 
@@ -5785,12 +6416,25 @@ def get_reports_analytics():
        AND ea.status != 'CANCELLED' {date_clause}
     WHERE s.id = ?
     ORDER BY ea.exam_date ASC, ea.id ASC;
-    """, query_params)
+    """
+
+    full_params = [
+        user_role,
+        user_role, user_id,
+        user_role, coach_id, coach_id, coach_id, coach_id
+    ] + params + [target_student_id]
+
+    cursor.execute(query_sql, full_params)
     rows = [dict(r) for r in cursor.fetchall()]
 
+    # Check Existence (404) vs Authorization (403)
     if not rows:
         conn.close()
         return jsonify({'error': 'Öğrenci profili bulunamadı.'}), 404
+
+    if not rows[0].get('is_authorized'):
+        conn.close()
+        return jsonify({'error': 'Bu öğrencimin verilerine erişim yetkiniz bulunmamaktadır.'}), 403
 
     first_r = rows[0]
     student_info = {
@@ -5821,15 +6465,17 @@ def get_reports_analytics():
                 'status': r['status']
             })
 
+    # Lazy Fallback for Legacy Mock Exams (Only executed if attempt list is empty)
     if not attempts:
         cursor.execute(f"""
         SELECT me.id, me.student_id, me.exam_system, me.exam_type, me.title as exam_name, me.publisher, me.created_at as exam_date, me.total_net, 'COMPLETED' as status
         FROM mock_exams me
         WHERE me.student_id = ? {date_clause.replace('exam_date', 'DATE(me.created_at)')}
         ORDER BY me.created_at ASC;
-        """, params)
+        """, params + [target_student_id])
         attempts = [dict(r) for r in cursor.fetchall()]
 
+    # 3. CONSOLIDATED QUERY 2: Test Results in Single IN-List Batch
     if attempts:
         attempt_ids = [a['id'] for a in attempts]
         placeholders = ','.join(['?'] * len(attempt_ids))
@@ -7521,11 +8167,16 @@ def handle_publishers_admin():
             conn.close()
             return jsonify({'error': 'Yayınevi adı zorunludur.'}), 400
 
-        cursor.execute("INSERT INTO publishers (name, status) VALUES (?, 'ACTIVE');", (name,))
-        pub_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return jsonify({'message': 'Yayınevi başarıyla eklendi.', 'publisher_id': pub_id})
+        try:
+            cursor.execute("INSERT INTO publishers (name, status) VALUES (?, 'ACTIVE');", (name,))
+            pub_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return jsonify({'message': 'Yayınevi başarıyla eklendi.', 'publisher_id': pub_id})
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            return jsonify({'error': f'Bu yayınevi zaten mevcut veya eklenemedi: {str(e)}'}), 409
 
 @app.route('/api/admin/publishers/<int:pub_id>', methods=['PUT'])
 def update_publisher_admin(pub_id):
@@ -7585,7 +8236,7 @@ def get_resource_analytics():
     JOIN resource_assignments ra ON ra.resource_id = r.id OR ra.resource_id IN (SELECT id FROM resources WHERE origin_resource_id = r.id)
     LEFT JOIN subjects s ON r.subject_id = s.id
     WHERE r.owner_type = 'SYSTEM' OR r.owner_id IS NULL
-    GROUP BY r.id, r.name, r.subject, r.grade, r.exam_type, r.publisher, r.difficulty
+    GROUP BY r.id, r.name, r.title, r.publisher, s.name
     ORDER BY assignment_count DESC
     LIMIT 10;
     """)

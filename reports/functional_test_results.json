@@ -77,7 +77,7 @@
     "expected": "HTTP 200 & liste dönmeli",
     "actual": "Status 200",
     "severity": "Kritik",
-    "notes": "{\"students\":[{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"burak.akcan@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":1,\"last_login_at\":\"2026-08-16 21:42:26\",\"name\":\"Burak Akcan\",\"school\":\"Fen Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Bilgisayar M\\u00fchendisli\\u011fi\",\"target_rank\":1500,\"target_score\":520.0,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":4,\"user_status\":\"ACTIVE\",\"username\":\"burak.akcan\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"elif.yilmaz@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":2,\"last_login_at\":null,\"name\":\"Elif Y\\u0131lmaz\",\"school\":\"Anadolu Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Elektrik-Elektronik M\\u00fch.\",\"target_rank\":2500,\"target_score\":510.0,\"target_university\":\"ODT\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":5,\"user_status\":\"ACTIVE\",\"username\":\"elif.yilmaz\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"mert.demir@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":3,\"last_login_at\":\"2026-08-16 06:57:19\",\"name\":\"Mert Demir\",\"school\":\"\\u00d6zel Kolej\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"End\\u00fcstri M\\u00fchendisli\\u011fi\",\"target_rank\":1000,\"target_score\":525.0,\"target_university\":\"Bo\\u011fazi\\u00e7i\",\"track\":\"SAYISAL\",\"user_id\":6,\"user_status\":\"ACTIVE\",\"username\":\"mert.demir\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"zeynep.kaya@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":4,\"last_login_at\":null,\"name\":\"Zeynep Kaya\",\"school\":\"Anadolu Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"\\u0130\\u015fletme\",\"target_rank\":3000,\"target_score\":480.0,\"target_university\":\"Bo\\u011fazi\\u00e7i\",\"track\":\"EA\",\"user_id\":7,\"user_status\":\"ACTIVE\",\"username\":\"zeynep.kaya\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"can.ozturk@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":5,\"last_login_at\":null,\"name\":\"Can \\u00d6zt\\u00fcrk\",\"school\":\"Atat\\u00fcrk Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Hukuk\",\"target_rank\":2000,\"target_score\":490.0,\"target_university\":\"Galatasaray\",\"track\":\"EA\",\"user_id\":8,\"user_status\":\"ACTIVE\",\"username\":\"can.ozturk\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"kaan.tekin@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":10,\"last_login_at\":null,\"name\":\"Kaan Tekin\",\"school\":\"Fen Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Makine M\\u00fchendisli\\u011fi\",\"target_rank\":1800,\"target_score\":515.0,\"target_university\":\"Bilkent\",\"track\":\"SAYISAL\",\"user_id\":13,\"user_status\":\"ACTIVE\",\"username\":\"kaan.tekin\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"ayse.demir@lgs.com\",\"exam_system\":\"YKS\",\"grade\":\"8. S\\u0131n\\u0131f\",\"id\":11,\"last_login_at\":null,\"name\":\"Ay\\u015fe Demir\",\"school\":\"\\u00d6zel Bilim Ortaokulu\",\"start_date\":\"2026-07-14\",\"surname\":null,\"target_department\":null,\"target_rank\":null,\"target_score\":null,\"target_university\":null,\"track\":\"SAYISAL\",\"user_id\":14,\"user_status\":\"ACTIVE\",\"username\":\"ayse.demir\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"zeynep.ak@lgs.com\",\"exam_system\":\"LGS\",\"grade\":\"8. S\\u0131n\\u0131f\",\"id\":12,\"last_login_at\":null,\"name\":\"Zeynep Ak\",\"school\":\"Atat\\u00fcrk Ortaokulu\",\"start_date\":\"2026-07-14\",\"surname\":null,\"target_department\":null,\"target_rank\":null,\"target_score\":null,\"target_university\":null,\"track\":\"SAYISAL\",\"user_id\":15,\"user_status\":\"ACTIVE\",\"username\":\"zeynep.ak\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":14,\"last_login_at\":null,\"name\":\"Kemal\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Y\\u0131lmaz\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":18,\"user_status\":\"ACTIVE\",\"username\":\"kemal.yilmaz\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":15,\"last_login_at\":null,\"name\":\"Bora\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Arslan\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":20,\"user_status\":\"ACTIVE\",\"username\":\"bora.arslan2\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":16,\"last_login_at\":null,\"name\":\"Bora\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Arslan\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":23,\"user_status\":\"ACTIVE\",\"username\":\"bora.arslan99\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":17,\"last_login_at\":null,\"name\":\"QA Student 2577\",\"school\":null,\"start_date\":\"2026-08-16\",\"surname\":\"\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":24,\"user_status\":\"ACTIVE\",\"username\":\"qa_stu_2577\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":18,\"last_login_at\":null,\"name\":\"QA Student 2596\",\"school\":null,\"start_date\":\"2026-08-16\",\"surname\":\"\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":25,\"user_status\":\"ACTIVE\",\"username\":\"qa_stu_2596\"}]}\n",
+    "notes": "{\"students\":[{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"burak.akcan@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":1,\"last_login_at\":\"2026-08-19 06:30:45\",\"name\":\"Burak Akcan\",\"school\":\"Fen Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Bilgisayar M\\u00fchendisli\\u011fi\",\"target_rank\":1500,\"target_score\":520.0,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":4,\"user_status\":\"ACTIVE\",\"username\":\"burak.akcan\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"elif.yilmaz@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":2,\"last_login_at\":null,\"name\":\"Elif Y\\u0131lmaz\",\"school\":\"Anadolu Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Elektrik-Elektronik M\\u00fch.\",\"target_rank\":2500,\"target_score\":510.0,\"target_university\":\"ODT\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":5,\"user_status\":\"ACTIVE\",\"username\":\"elif.yilmaz\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"mert.demir@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":3,\"last_login_at\":\"2026-08-17 14:19:46\",\"name\":\"Mert Demir\",\"school\":\"\\u00d6zel Kolej\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"End\\u00fcstri M\\u00fchendisli\\u011fi\",\"target_rank\":1000,\"target_score\":525.0,\"target_university\":\"Bo\\u011fazi\\u00e7i\",\"track\":\"SAYISAL\",\"user_id\":6,\"user_status\":\"ACTIVE\",\"username\":\"mert.demir\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"zeynep.kaya@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":4,\"last_login_at\":null,\"name\":\"Zeynep Kaya\",\"school\":\"Anadolu Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"\\u0130\\u015fletme\",\"target_rank\":3000,\"target_score\":480.0,\"target_university\":\"Bo\\u011fazi\\u00e7i\",\"track\":\"EA\",\"user_id\":7,\"user_status\":\"ACTIVE\",\"username\":\"zeynep.kaya\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"can.ozturk@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":5,\"last_login_at\":null,\"name\":\"Can \\u00d6zt\\u00fcrk\",\"school\":\"Atat\\u00fcrk Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Hukuk\",\"target_rank\":2000,\"target_score\":490.0,\"target_university\":\"Galatasaray\",\"track\":\"EA\",\"user_id\":8,\"user_status\":\"ACTIVE\",\"username\":\"can.ozturk\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"kaan.tekin@student.com\",\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":10,\"last_login_at\":null,\"name\":\"Kaan Tekin\",\"school\":\"Fen Lisesi\",\"start_date\":\"2026-06-14\",\"surname\":null,\"target_department\":\"Makine M\\u00fchendisli\\u011fi\",\"target_rank\":1800,\"target_score\":515.0,\"target_university\":\"Bilkent\",\"track\":\"SAYISAL\",\"user_id\":13,\"user_status\":\"ACTIVE\",\"username\":\"kaan.tekin\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"ayse.demir@lgs.com\",\"exam_system\":\"YKS\",\"grade\":\"8. S\\u0131n\\u0131f\",\"id\":11,\"last_login_at\":null,\"name\":\"Ay\\u015fe Demir\",\"school\":\"\\u00d6zel Bilim Ortaokulu\",\"start_date\":\"2026-07-14\",\"surname\":null,\"target_department\":null,\"target_rank\":null,\"target_score\":null,\"target_university\":null,\"track\":\"SAYISAL\",\"user_id\":14,\"user_status\":\"ACTIVE\",\"username\":\"ayse.demir\"},{\"coach_id\":1,\"created_by_coach_id\":null,\"email\":\"zeynep.ak@lgs.com\",\"exam_system\":\"LGS\",\"grade\":\"8. S\\u0131n\\u0131f\",\"id\":12,\"last_login_at\":null,\"name\":\"Zeynep Ak\",\"school\":\"Atat\\u00fcrk Ortaokulu\",\"start_date\":\"2026-07-14\",\"surname\":null,\"target_department\":null,\"target_rank\":null,\"target_score\":null,\"target_university\":null,\"track\":\"SAYISAL\",\"user_id\":15,\"user_status\":\"ACTIVE\",\"username\":\"zeynep.ak\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":14,\"last_login_at\":null,\"name\":\"Kemal\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Y\\u0131lmaz\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":18,\"user_status\":\"ACTIVE\",\"username\":\"kemal.yilmaz\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":15,\"last_login_at\":null,\"name\":\"Bora\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Arslan\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":20,\"user_status\":\"ACTIVE\",\"username\":\"bora.arslan2\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":16,\"last_login_at\":null,\"name\":\"Bora\",\"school\":null,\"start_date\":\"2026-08-14\",\"surname\":\"Arslan\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":23,\"user_status\":\"ACTIVE\",\"username\":\"bora.arslan99\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":17,\"last_login_at\":null,\"name\":\"QA Student 2577\",\"school\":null,\"start_date\":\"2026-08-16\",\"surname\":\"\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":24,\"user_status\":\"ACTIVE\",\"username\":\"qa_stu_2577\"},{\"coach_id\":1,\"created_by_coach_id\":1,\"email\":null,\"exam_system\":\"YKS\",\"grade\":\"12. S\\u0131n\\u0131f\",\"id\":18,\"last_login_at\":null,\"name\":\"QA Student 2596\",\"school\":null,\"start_date\":\"2026-08-16\",\"surname\":\"\",\"target_department\":\"M\\u00fchendislik\",\"target_rank\":null,\"target_score\":null,\"target_university\":\"\\u0130T\\u00dc\",\"track\":\"SAYISAL\",\"user_id\":25,\"user_status\":\"ACTIVE\",\"username\":\"qa_stu_2596\"}]}\n",
     "pass": false
   },
   {
@@ -111,14 +111,14 @@
     "page_flow": "Ödev Yönetimi (Ekleme)",
     "steps": "POST /api/odevler (Koç tarafından ödev atama)",
     "expected": "HTTP 200/201 & Ödev ID oluşturuldu",
-    "actual": "Status 200, Res: {'id': 32, 'message': 'Ödev başarıyla oluşturuldu ve öğrenciye atandı!'}",
+    "actual": "Status 200, Res: {'id': 36, 'message': 'Ödev başarıyla oluşturuldu ve öğrenciye atandı!'}",
     "severity": "Kritik",
     "notes": "Yok",
     "pass": true
   },
   {
     "page_flow": "Ödev Yönetimi (Güncelleme)",
-    "steps": "PUT /api/odevler (ID=32)",
+    "steps": "PUT /api/odevler (ID=36)",
     "expected": "HTTP 200 & Durum güncellendi",
     "actual": "Status 500",
     "severity": "Yüksek",
@@ -127,12 +127,12 @@
   },
   {
     "page_flow": "Ödev Yönetimi (Silme)",
-    "steps": "DELETE /api/odevler?id=32",
+    "steps": "DELETE /api/odevler?id=36",
     "expected": "HTTP 200 & Ödev silindi",
-    "actual": "Status 500",
+    "actual": "Status 200",
     "severity": "Yüksek",
-    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
-    "pass": false
+    "notes": "Yok",
+    "pass": true
   },
   {
     "page_flow": "Müfredat & Kaynak Takibi",
@@ -199,7 +199,7 @@
   },
   {
     "page_flow": "Deneme (Silme)",
-    "steps": "DELETE /api/deneme/105",
+    "steps": "DELETE /api/deneme/106",
     "expected": "HTTP 200 & Deneme silindi",
     "actual": "Status 200",
     "severity": "Orta",
@@ -237,10 +237,10 @@
     "page_flow": "Kitap Okuma (Ekleme)",
     "steps": "POST /api/kitaplar (Yeni Kitap)",
     "expected": "HTTP 200/201 & Kitap eklendi",
-    "actual": "Status 500",
+    "actual": "Status 200",
     "severity": "Yüksek",
-    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
-    "pass": false
+    "notes": "Yok",
+    "pass": true
   },
   {
     "page_flow": "Mesajlaşma (Kişiler)",
@@ -273,10 +273,10 @@
     "page_flow": "Çalışma Zamanlayıcısı",
     "steps": "POST /api/timer (Çalışma Seansı)",
     "expected": "HTTP 200/201 & Seans kaydedildi",
-    "actual": "Status 500",
+    "actual": "Status 200",
     "severity": "Yüksek",
-    "notes": "<!doctype html>\n<html lang=en>\n<title>500 Internal Server Error</title>\n<h1>Internal Server Error</h1>\n<p>The server encountered an internal error and was unable to complete your request. Either the server is overloaded or there is an error in the application.</p>\n",
-    "pass": false
+    "notes": "Yok",
+    "pass": true
   },
   {
     "page_flow": "Soru Takibi (Listeleme)",

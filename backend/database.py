@@ -41,6 +41,8 @@ if os.path.exists(_env_path):
         pass
 
 def get_database_url():
+    if os.environ.get("USE_SQLITE") == "1":
+        return None
     url = os.environ.get("DATABASE_URL")
     if url and url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
@@ -451,6 +453,8 @@ def init_db():
         FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
         FOREIGN KEY (assigned_by) REFERENCES users(id)
     );
+    """)
+    cursor.execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS idx_coach_student_rel_unique ON coach_student_relationships (student_id, coach_id);
     """)
 
@@ -1035,7 +1039,7 @@ def init_db():
     );
     """)
 
-    # 26. Books
+    # 26. Books & Reading Logs
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS books (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1044,7 +1048,14 @@ def init_db():
         author TEXT,
         page_count INTEGER DEFAULT 0,
         current_page INTEGER DEFAULT 0,
-        status TEXT DEFAULT 'READING',
+        total_pages INTEGER DEFAULT 0,
+        read_pages INTEGER DEFAULT 0,
+        rating_stars INTEGER DEFAULT 5,
+        genre TEXT DEFAULT 'Genel',
+        notes TEXT,
+        coach_feedback TEXT,
+        target_finish_date DATE,
+        status TEXT DEFAULT 'IN_PROGRESS',
         start_date DATE,
         finish_date DATE,
         rating INTEGER DEFAULT 0,
@@ -1052,6 +1063,66 @@ def init_db():
         FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
     );
     """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS reading_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER NOT NULL,
+        student_id INTEGER NOT NULL,
+        session_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        start_page INTEGER DEFAULT 0,
+        end_page INTEGER DEFAULT 0,
+        pages_read INTEGER DEFAULT 0,
+        duration_minutes INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+        FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS reading_goals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER NOT NULL,
+        target_books_count INTEGER DEFAULT 2,
+        target_pages_monthly INTEGER DEFAULT 500,
+        year INTEGER NOT NULL,
+        month INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(student_id, year, month),
+        FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    );
+    """)
+
+    # Migrate existing reading_goals table columns if needed
+    for col, col_type in [
+        ('year', 'INTEGER NOT NULL DEFAULT 2026')
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE reading_goals ADD COLUMN {col} {col_type};")
+        except Exception:
+            pass
+
+    # Migrate existing books table columns if needed
+    for col, col_type in [
+        ('page_count', 'INTEGER DEFAULT 0'),
+        ('current_page', 'INTEGER DEFAULT 0'),
+        ('total_pages', 'INTEGER DEFAULT 0'),
+        ('read_pages', 'INTEGER DEFAULT 0'),
+        ('rating_stars', 'INTEGER DEFAULT 5'),
+        ('genre', "TEXT DEFAULT 'Genel'"),
+        ('notes', 'TEXT'),
+        ('coach_feedback', 'TEXT'),
+        ('target_finish_date', 'DATE'),
+        ('finish_date', 'DATE'),
+        ('rating', 'INTEGER DEFAULT 0'),
+        ('review', 'TEXT')
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE books ADD COLUMN {col} {col_type};")
+        except Exception:
+            pass
 
     # 27. Kaynak Havuzu (Resource Pool & Library Management Engine)
     cursor.execute("""
@@ -1176,6 +1247,21 @@ def init_db():
         cursor.execute("ALTER TABLE publishers ADD COLUMN status TEXT DEFAULT 'ACTIVE';")
     except Exception:
         pass
+
+    for col_def in [
+        "ALTER TABLE books ADD COLUMN total_pages INTEGER DEFAULT 0;",
+        "ALTER TABLE books ADD COLUMN read_pages INTEGER DEFAULT 0;",
+        "ALTER TABLE books ADD COLUMN rating_stars INTEGER DEFAULT 5;",
+        "ALTER TABLE books ADD COLUMN genre TEXT DEFAULT 'Genel';",
+        "ALTER TABLE books ADD COLUMN notes TEXT;",
+        "ALTER TABLE books ADD COLUMN coach_feedback TEXT;",
+        "ALTER TABLE books ADD COLUMN target_finish_date DATE;",
+        "ALTER TABLE books ADD COLUMN status TEXT DEFAULT 'IN_PROGRESS';"
+    ]:
+        try:
+            cursor.execute(col_def)
+        except Exception:
+            pass
 
     # 27. Messages (Native Modern Chat Experience - No External WhatsApp Dependencies)
     cursor.execute("""
@@ -1566,6 +1652,42 @@ def ensure_lgs_seeded():
             cursor.execute(idx_sql)
         except Exception:
             pass
+
+    # Ensure student 1 (Burak Akcan) and others have demo books and goals if empty
+    try:
+        cursor.execute("SELECT id FROM students WHERE id = 1;")
+        st1 = cursor.fetchone()
+        if st1:
+            cursor.execute("SELECT COUNT(*) FROM books WHERE student_id = 1;")
+            b_cnt = cursor.fetchone()[0]
+            if b_cnt == 0:
+                cursor.execute("""
+                INSERT INTO books (student_id, title, author, total_pages, read_pages, rating_stars, genre, status, start_date, coach_feedback)
+                VALUES 
+                (1, 'Simyacı', 'Paulo Coelho', 184, 45, 5, 'Dünya Klasikleri', 'IN_PROGRESS', DATE('now', '-10 days'), 'Bu kitabı bu hafta tamamlamanı öneriyorum.'),
+                (1, 'Atomik Alışkanlıklar', 'James Clear', 320, 0, 5, 'Kişisel Gelişim', 'TO_READ', DATE('now', '-5 days'), NULL),
+                (1, 'Nutuk', 'Mustafa Kemal Atatürk', 600, 600, 5, 'Tarih & Belgesel', 'COMPLETED', DATE('now', '-30 days'), 'Harika bir okuma analizi.');
+                """)
+                cursor.execute("SELECT id FROM books WHERE student_id = 1 AND title = 'Simyacı';")
+                sim_row = cursor.fetchone()
+                if sim_row:
+                    sim_id = sim_row[0]
+                    cursor.execute("""
+                    INSERT INTO reading_logs (student_id, book_id, start_page, end_page, pages_read, duration_minutes, notes, session_date)
+                    VALUES 
+                    (1, ?, 0, 20, 20, 30, '1. Bölüm Endülüs kısmı okundu.', DATETIME('now', '-2 days')),
+                    (1, ?, 20, 45, 25, 35, 'Çöl yolculuğu başladı.', DATETIME('now', '-1 days'));
+                    """, (sim_id, sim_id))
+            
+            from datetime import datetime
+            now_dt = datetime.now()
+            cursor.execute("""
+            INSERT INTO reading_goals (student_id, target_books_count, target_pages_monthly, year, month)
+            VALUES (1, 3, 500, ?, ?)
+            ON CONFLICT(student_id, year, month) DO NOTHING;
+            """, (now_dt.year, now_dt.month))
+    except Exception as e:
+        print(f"[ENSURE_BOOKS_SEEDED WARN] {e}")
 
     conn.commit()
     conn.close()

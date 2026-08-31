@@ -94,66 +94,20 @@ function escapeHtml(str) {
 }
 
 // ============================================================
-// GLOBAL IN-FLIGHT GET REQUEST DEDUPLICATION & MUTATION INVALIDATION
+// SAFE NUMBER FORMATTING HELPER (SEMANTIC NULL VS ZERO AWARE)
 // ============================================================
-const _inFlightGetRequests = new Map();
-const _originalFetch = typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : null;
+function fmtNum(val, digits = 2, placeholder = '-') {
+    if (val === null || val === undefined || val === '' || isNaN(Number(val))) {
+        return placeholder;
+    }
+    return Number(val).toFixed(digits);
+}
 
-if (typeof window !== 'undefined' && _originalFetch) {
-    window.fetch = function(input, init = {}) {
-        const method = (init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
-        const urlStr = typeof input === 'string' ? input : (input.url || input.toString());
-        
-        // Auto Invalidation on Successful Mutations (POST, PUT, DELETE, PATCH)
-        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && urlStr.includes('/api/')) {
-            return _originalFetch(input, init).then(res => {
-                if (res.ok) {
-                    if (urlStr.includes('/odevler')) {
-                        invalidateClientCache('/odevler');
-                        invalidateClientCache('/students');
-                    } else if (urlStr.includes('/students') || urlStr.includes('/rel/')) {
-                        invalidateClientCache('/students');
-                        invalidateClientCache('/mufredat');
-                        invalidateClientCache('/deneme');
-                        invalidateClientCache('/raporlar');
-                        clearCoachStudentsCache();
-                    } else if (urlStr.includes('/deneme')) {
-                        invalidateClientCache('/deneme');
-                        invalidateClientCache('/raporlar');
-                    } else if (urlStr.includes('/kaynak') || urlStr.includes('/resources')) {
-                        invalidateClientCache('/kaynak');
-                        invalidateClientCache('/resources');
-                    } else if (urlStr.includes('/mufredat')) {
-                        invalidateClientCache('/mufredat');
-                    }
-                }
-                return res;
-            });
-        }
-        
-        // Only deduplicate idempotent GET requests
-        if (method === 'GET' && urlStr.includes('/api/')) {
-            const token = localStorage.getItem('yks_token') || '';
-            const inFlightKey = `${urlStr}::${token}`;
-            
-            if (_inFlightGetRequests.has(inFlightKey)) {
-                return _inFlightGetRequests.get(inFlightKey).then(res => res.clone());
-            }
-            
-            const promise = _originalFetch(input, init).then(res => {
-                _inFlightGetRequests.delete(inFlightKey);
-                return res;
-            }).catch(err => {
-                _inFlightGetRequests.delete(inFlightKey);
-                throw err;
-            });
-            
-            _inFlightGetRequests.set(inFlightKey, promise);
-            return promise.then(res => res.clone());
-        }
-        
-        return _originalFetch(input, init);
-    };
+function fmtNumInt(val, placeholder = '-') {
+    if (val === null || val === undefined || val === '' || isNaN(Number(val))) {
+        return placeholder;
+    }
+    return String(Math.round(Number(val)));
 }
 
 // ============================================================
@@ -191,6 +145,10 @@ function invalidateClientCache(pattern = '') {
             _clientApiCache.delete(key);
         }
     }
+}
+
+function clearClientCache(pattern = '') {
+    invalidateClientCache(pattern);
 }
 
 function clearAllClientCache() {
@@ -288,6 +246,24 @@ async function apiFetch(endpointUrl, options = {}) {
 }
 
 let currentUser = null;
+
+function getCurrentUser() {
+    if (currentUser) return currentUser;
+    if (window.currentUser) {
+        currentUser = window.currentUser;
+        return currentUser;
+    }
+    const savedUser = localStorage.getItem('yks_user');
+    if (savedUser) {
+        try {
+            currentUser = JSON.parse(savedUser);
+            window.currentUser = currentUser;
+            return currentUser;
+        } catch (e) {}
+    }
+    return null;
+}
+
 let currentView = 'dashboard';
 let selectedStudentId = 1;
 let selectedPlanId = null;
@@ -298,6 +274,15 @@ let denemeChartInstance = null;
 let coachStudentsList = []; // Cache of coach's students for dropdowns
 let allPlatformResources = []; // Cache of all resources for filtering
 let currentActiveStudentId = 1;
+
+window._traceCounters = {
+    navigateView: 0,
+    renderBooksView: 0,
+    changeActiveStudent: 0,
+    hashchange: 0,
+    hasValidClientCacheForView: 0,
+    fetchKitaplar: 0
+};
 
 // Global Weekly Program State Variables & Request Sequence (MUST BE DECLARED BEFORE ANY VIEW RENDER)
 let weeklyCurrentWeekStart = null;
@@ -357,113 +342,31 @@ function initAppBoot() {
 
 function initLoginListeners() {
     const loginForm = document.getElementById('loginForm');
-    const uInput = document.getElementById('loginEmail');
-    const pInput = document.getElementById('loginPassword');
     const forgotLink = document.getElementById('forgotPasswordLink');
 
-    const btnCoach = document.getElementById('btnFillCoach');
-    const btnStudent = document.getElementById('btnFillStudent');
-    const btnAdmin = document.getElementById('btnFillAdmin');
-
-    const fillLogin = (username, password, e) => {
-        console.log("FILL LOGIN EXECUTED", username);
-        if (e) {
-            if (typeof e.preventDefault === 'function') e.preventDefault();
-            if (typeof e.stopPropagation === 'function') e.stopPropagation();
-        }
-        if (uInput) {
-            uInput.value = username;
-            uInput.setAttribute('value', username);
-            uInput.dispatchEvent(new Event('input', { bubbles: true }));
-            uInput.dispatchEvent(new Event('change', { bubbles: true }));
-            uInput.focus();
-        }
-        if (pInput) {
-            pInput.value = password;
-            pInput.setAttribute('value', password);
-            pInput.dispatchEvent(new Event('input', { bubbles: true }));
-            pInput.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        const errDiv = document.getElementById('loginError');
-        if (errDiv) errDiv.classList.add('hidden');
-        return false;
-    };
-
-    if (btnCoach) {
-        btnCoach.onclick = (e) => fillLogin('ummu.akcan', 'password123', e);
-    }
-    if (btnStudent) {
-        btnStudent.onclick = (e) => fillLogin('burak.akcan', 'ogrenci123', e);
-    }
-    if (btnAdmin) {
-        btnAdmin.onclick = (e) => fillLogin('admin', 'password123', e);
-    }
     if (forgotLink) {
-        forgotLink.onclick = (e) => {
-            if (e) e.preventDefault();
+        forgotLink.onclick = function(e) {
+            e.preventDefault();
             openForgotPasswordModal(e);
         };
     }
-    if (loginForm) {
-        loginForm.onsubmit = (e) => {
-            if (e) e.preventDefault();
-            handleLogin(e);
-            return false;
-        };
-    }
-}
 
-// Central Single Source of Truth for Demo Test Accounts
-const DEMO_TEST_ACCOUNTS = {
-    COACH: { username: 'ummu.akcan', password: 'password123', label: '👨‍🏫 KOÇ HESABI' },
-    STUDENT: { username: 'burak.akcan', password: 'ogrenci123', label: '🎓 ÖĞRENCİ HESABI' },
-    ADMIN: { username: 'admin', password: 'password123', label: '👑 ADMİN HESABI' }
-};
-
-function fillCredentials(usernameOrRole, password, ev) {
-    console.log("DOLDUR BUTTON CLICK", usernameOrRole);
-    const eventObj = ev || window.event;
-    if (eventObj) {
-        if (typeof eventObj.preventDefault === 'function') eventObj.preventDefault();
-        if (typeof eventObj.stopPropagation === 'function') eventObj.stopPropagation();
-    }
-    const uInput = document.getElementById('loginEmail');
-    const pInput = document.getElementById('loginPassword');
-    const errDiv = document.getElementById('loginError');
-
-    if (errDiv) {
-        errDiv.textContent = '';
-        errDiv.classList.add('hidden');
-    }
-    if (uInput) uInput.classList.remove('border-rose-500');
-    if (pInput) pInput.classList.remove('border-rose-500');
-
-    let userVal = usernameOrRole;
-    let passVal = password;
-
-    if (DEMO_TEST_ACCOUNTS[usernameOrRole]) {
-        userVal = DEMO_TEST_ACCOUNTS[usernameOrRole].username;
-        passVal = DEMO_TEST_ACCOUNTS[usernameOrRole].password;
+    if (!loginForm) {
+        console.error('[LOGIN] loginForm bulunamadı');
+        return;
     }
 
-    if (uInput) {
-        uInput.value = userVal || '';
-        uInput.setAttribute('value', userVal || '');
-        uInput.dispatchEvent(new Event('input', { bubbles: true }));
-        uInput.dispatchEvent(new Event('change', { bubbles: true }));
-        uInput.focus();
-    }
-    if (pInput) {
-        pInput.value = passVal || '';
-        pInput.setAttribute('value', passVal || '');
-        pInput.dispatchEvent(new Event('input', { bubbles: true }));
-        pInput.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    return false;
-}
+    loginForm.onsubmit = function(e) {
+        e.preventDefault();
+        e.stopPropagation();
 
-function fillDemoCredentials(role, ev) {
-    return fillCredentials(role, null, ev);
+        console.log('[LOGIN] SUBMIT EVENT');
+
+        handleLogin();
+        return false;
+    };
+
+    console.log('[LOGIN] listener hazır');
 }
 
 async function doLogin(username, password) {
@@ -508,12 +411,14 @@ async function doLogin(username, password) {
         });
         
         let data;
-        const contentType = res.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
+        try {
             data = await res.json();
-        } else {
-            const rawText = await res.text();
-            console.error("LOGIN RESPONSE NON-JSON:", rawText);
+        } catch (parseErr) {
+            const rawText = await res.text().catch(() => '');
+            console.error("LOGIN RESPONSE NON-JSON:", res.status, rawText);
+            if (!res.ok) {
+                throw new Error(`Sunucu bağlantı hatası (HTTP ${res.status}).`);
+            }
             throw new Error("Sunucudan geçersiz yanıt alındı.");
         }
 
@@ -526,7 +431,9 @@ async function doLogin(username, password) {
         localStorage.setItem('yks_token', data.token);
         localStorage.setItem('yks_user', JSON.stringify(data.user));
         currentUser = data.user;
+        window.currentUser = data.user;
         await showApp();
+        return true;
     } catch (err) {
         console.error("Login error:", err);
         if (errDiv) {
@@ -535,6 +442,7 @@ async function doLogin(username, password) {
         }
         if (uInput) uInput.classList.add('border-rose-500');
         if (pInput) pInput.classList.add('border-rose-500');
+        return false;
     } finally {
         if (submitBtn) {
             submitBtn.disabled = false;
@@ -544,24 +452,22 @@ async function doLogin(username, password) {
 }
 
 // Authentication
-function handleLogin(e) {
-    console.log("HANDLE LOGIN TRIGGERED", e);
-    if (e) {
-        if (typeof e.preventDefault === 'function') e.preventDefault();
-        if (typeof e.stopPropagation === 'function') e.stopPropagation();
-    }
+async function handleLogin() {
+    console.log('[LOGIN] HANDLE LOGIN');
+
     const usernameInput = document.getElementById('loginEmail');
     const passwordInput = document.getElementById('loginPassword');
+
     const username = usernameInput ? usernameInput.value : '';
     const password = passwordInput ? passwordInput.value : '';
-    doLogin(username, password);
-    return false;
+
+    console.log('[LOGIN] USERNAME:', username);
+
+    return await doLogin(username, password);
 }
 
-window.fillCredentials = fillCredentials;
-window.fillDemoCredentials = fillDemoCredentials;
-window.doLogin = doLogin;
 window.handleLogin = handleLogin;
+window.doLogin = doLogin;
 
 function checkDevEnvironment() {
     const container = document.getElementById('demoCredentialsContainer');
@@ -585,6 +491,7 @@ function checkAuth() {
     if (savedUser && savedToken) {
         try {
             currentUser = JSON.parse(savedUser);
+            window.currentUser = currentUser;
             showApp();
         } catch (e) {
             logout();
@@ -603,6 +510,7 @@ function logout() {
     localStorage.removeItem('yks_user');
     sessionStorage.clear();
     currentUser = null;
+    window.currentUser = null;
     showLoginScreen();
 }
 
@@ -628,21 +536,27 @@ async function showApp() {
     if (loginScreen) loginScreen.classList.add('hidden');
     if (appContainer) appContainer.classList.remove('hidden');
     
-    if (currentUser) {
+    const user = getCurrentUser();
+    if (user) {
+        currentUser = user;
+        window.currentUser = user;
         const userNameLabel = document.getElementById('userNameLabel');
         const userEmailLabel = document.getElementById('userEmailLabel');
         const userRoleBadge = document.getElementById('userRoleBadge');
-        if (userNameLabel) userNameLabel.textContent = currentUser.name || 'Kullanıcı';
-        if (userEmailLabel) userEmailLabel.textContent = currentUser.username ? `@${currentUser.username}` : '';
-        if (userRoleBadge) userRoleBadge.textContent = currentUser.role || 'KOÇ';
+        if (userNameLabel) userNameLabel.textContent = user.name || 'Kullanıcı';
+        if (userEmailLabel) userEmailLabel.textContent = user.username ? `@${user.username}` : '';
+        if (userRoleBadge) {
+            userRoleBadge.textContent = user.role === 'STUDENT' ? 'ÖĞRENCİ' : (user.role === 'ADMIN' ? 'ADMİN' : 'KOÇ');
+        }
 
         try {
             updateSidebarByRole();
             initTheme();
-            if (currentUser.role !== 'STUDENT') {
+            if (user.role !== 'STUDENT') {
                 await loadCoachStudentsList();
             }
-            await loadAllResourcesCache();
+            // Non-blocking warmup in background so initial view loads immediately (<50ms)
+            void loadAllResourcesCache();
             if (typeof initNotificationSystem === 'function') {
                 initNotificationSystem();
             }
@@ -691,6 +605,10 @@ function handleStudentDetailClick(studentId, studentName = '') {
 }
 
 window.addEventListener('hashchange', () => {
+    if (window._traceCounters) {
+        window._traceCounters.hashchange++;
+        console.log(`[BOOKS_TRACE] hashchange #${window._traceCounters.hashchange} time=${new Date().toISOString()} hash=${window.location.hash} currentView=${currentView}`);
+    }
     const route = parseUrlHash();
     if (route && route.viewName && route.viewName !== currentView) {
         console.log('[HASH CHANGE NAVIGATE]', route);
@@ -801,6 +719,10 @@ function getCoachStudentSwitcherHtml() {
 }
 
 function changeActiveStudent(studentId) {
+    if (window._traceCounters) {
+        window._traceCounters.changeActiveStudent++;
+        console.log(`[BOOKS_TRACE] changeActiveStudent #${window._traceCounters.changeActiveStudent} time=${new Date().toISOString()} studentId=${studentId} currentView=${currentView}`);
+    }
     if (!studentId || studentId === 'null' || studentId === 'undefined') return;
     selectedStudentId = parseInt(studentId);
     localStorage.setItem('yks_selected_student_id', selectedStudentId);
@@ -822,8 +744,302 @@ function changeActiveStudent(studentId) {
     navigateView(currentView, selectedStudentId);
 }
 
+// ============================================================
+// P6.5 PERCEIVED PERFORMANCE: TOP PROGRESS & SKELETON HELPERS
+// ============================================================
+function showTopNavProgress() {
+    const bar = document.getElementById('topNavProgressBar');
+    if (!bar) return;
+    bar.style.width = '70%';
+    bar.style.opacity = '1';
+}
+
+function hideTopNavProgress() {
+    const bar = document.getElementById('topNavProgressBar');
+    if (!bar) return;
+    bar.style.width = '100%';
+    setTimeout(() => {
+        bar.style.opacity = '0';
+        setTimeout(() => { bar.style.width = '0'; }, 300);
+    }, 150);
+}
+
+function hasValidClientCacheForView(viewName, paramId = null) {
+    const targetStudentId = paramId || selectedStudentId || (coachStudentsList && coachStudentsList.length > 0 ? coachStudentsList[0].id : null) || 1;
+    let endpoint = null;
+    let maxAgeMs = 120000;
+
+    if (viewName === 'students') {
+        return Boolean(coachStudentsCache && coachStudentsCache.length > 0);
+    } else if (viewName === 'program') {
+        const monday = typeof getWeekMonday === 'function' ? getWeekMonday(new Date()) : new Date().toISOString().split('T')[0];
+        endpoint = `/weekly-program?student_id=${targetStudentId}&week_start=${monday}`;
+        maxAgeMs = 120000;
+    } else if (viewName === 'assignments' || viewName === 'odevlerim') {
+        const studentParam = currentUser && currentUser.role !== 'STUDENT'
+            ? `?student_id=${selectedStudentId || 'ALL'}&status=${currentAssignmentsFilter}&search=${encodeURIComponent(currentAssignmentsSearch)}&sort=${currentAssignmentsSort}`
+            : `?status=${currentAssignmentsFilter}&search=${encodeURIComponent(currentAssignmentsSearch)}&sort=${currentAssignmentsSort}`;
+        endpoint = `/odevler${studentParam}`;
+        maxAgeMs = 45000;
+    } else if (viewName === 'mufredat') {
+        endpoint = `/mufredat?student_id=${targetStudentId}`;
+        maxAgeMs = 300000;
+    } else if (viewName === 'deneme') {
+        endpoint = `/deneme?student_id=${targetStudentId}`;
+        maxAgeMs = 120000;
+    } else if (viewName === 'raporlar' || viewName === 'reports') {
+        endpoint = `/raporlar?preset=${currentReportsPreset}&student_id=${targetStudentId}`;
+        maxAgeMs = 120000;
+    } else if (viewName === 'kaynak-havuzu' || viewName === 'resources') {
+        const params = new URLSearchParams({
+            tab: currentKaynakTab,
+            search: kaynakSearchQuery,
+            subject_id: kaynakSubjectFilter,
+            exam_system: kaynakSystemFilter,
+            resource_type: kaynakTypeFilter
+        });
+        endpoint = `/kaynak-havuzu?${params.toString()}`;
+        maxAgeMs = 300000;
+    } else if (viewName === 'messages') {
+        endpoint = '/mesajlar/contacts';
+        maxAgeMs = 30000;
+    } else if (viewName === 'books') {
+        endpoint = `/kitaplar?student_id=${targetStudentId}`;
+        maxAgeMs = 60000;
+    }
+
+    if (!endpoint) return false;
+    const cached = getFromClientCache(endpoint, maxAgeMs);
+    return !!(cached && cached.data);
+}
+
+function renderViewSkeleton(viewName, container) {
+    if (!container) return;
+    
+    if (viewName === 'books') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl flex justify-between items-center">
+                <div class="h-4 w-40 bg-[#1E293B] rounded"></div>
+                <div class="h-8 w-24 bg-[#1E293B] rounded-xl"></div>
+            </div>
+            <div class="glass-card p-6 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-3">
+                <div class="h-4 w-48 bg-[#1E293B] rounded mb-4"></div>
+                <div class="h-16 bg-[#172238] rounded-xl w-full"></div>
+                <div class="h-16 bg-[#172238] rounded-xl w-full"></div>
+            </div>
+        </div>`;
+    } else if (viewName === 'deneme') {
+        container.innerHTML = `
+        <div class="space-y-6 animate-pulse max-w-7xl mx-auto">
+            <!-- Header Skeleton -->
+            <div class="glass-card p-5 border border-[#24314A] bg-[#111A2C] rounded-2xl flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-[#1E293B]"></div>
+                    <div class="space-y-2">
+                        <div class="h-3 w-28 bg-[#1E293B] rounded"></div>
+                        <div class="h-4 w-48 bg-[#1E293B] rounded"></div>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <div class="h-8 w-24 bg-[#1E293B] rounded-xl"></div>
+                    <div class="h-8 w-24 bg-[#1E293B] rounded-xl"></div>
+                </div>
+            </div>
+            <!-- KPI Grid Skeleton -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-16 bg-[#1E293B] rounded"></div>
+                </div>
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-16 bg-[#1E293B] rounded"></div>
+                </div>
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-16 bg-[#1E293B] rounded"></div>
+                </div>
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-16 bg-[#1E293B] rounded"></div>
+                </div>
+            </div>
+            <!-- Chart & List Skeleton -->
+            <div class="glass-card p-6 border border-[#24314A] bg-[#111A2C] rounded-2xl h-64 flex flex-col justify-between">
+                <div class="h-4 w-40 bg-[#1E293B] rounded"></div>
+                <div class="h-44 w-full bg-[#172238] rounded-xl"></div>
+            </div>
+        </div>`;
+    } else if (viewName === 'messages') {
+        container.innerHTML = `
+        <div class="flex h-[calc(100vh-140px)] border border-[#24314A] bg-[#0B1220] rounded-2xl overflow-hidden animate-pulse">
+            <div class="w-80 border-r border-[#24314A] p-3 space-y-3 bg-[#0B1324] shrink-0">
+                <div class="h-8 bg-[#172238] rounded-xl w-full"></div>
+                <div class="space-y-2">
+                    ${[1,2,3,4,5].map(() => `
+                    <div class="p-3 rounded-xl bg-[#111A2C] flex items-center gap-3 border border-[#24314A]/40">
+                        <div class="w-10 h-10 rounded-full bg-[#1E293B] shrink-0"></div>
+                        <div class="flex-1 space-y-1.5">
+                            <div class="h-3 w-24 bg-[#1E293B] rounded"></div>
+                            <div class="h-2.5 w-36 bg-[#172238] rounded"></div>
+                        </div>
+                    </div>`).join('')}
+                </div>
+            </div>
+            <div class="flex-1 flex flex-col justify-between p-4 bg-[#080D1A]">
+                <div class="h-12 border-b border-[#24314A] flex items-center gap-3 pb-3">
+                    <div class="w-9 h-9 rounded-full bg-[#1E293B]"></div>
+                    <div class="h-4 w-32 bg-[#1E293B] rounded"></div>
+                </div>
+                <div class="space-y-4 py-6">
+                    <div class="h-12 w-64 bg-[#172238] rounded-2xl self-start"></div>
+                    <div class="h-14 w-80 bg-indigo-950/40 rounded-2xl ml-auto border border-indigo-800/40"></div>
+                    <div class="h-10 w-48 bg-[#172238] rounded-2xl self-start"></div>
+                </div>
+                <div class="h-12 bg-[#111A2C] border border-[#24314A] rounded-xl w-full"></div>
+            </div>
+        </div>`;
+    } else if (viewName === 'mufredat') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="glass-card p-6 border border-slate-800 bg-[#111A2C] rounded-3xl flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <div class="w-14 h-14 rounded-2xl bg-[#1E293B]"></div>
+                    <div class="space-y-2">
+                        <div class="h-4 w-40 bg-[#1E293B] rounded"></div>
+                        <div class="h-3 w-24 bg-[#1E293B] rounded"></div>
+                    </div>
+                </div>
+                <div class="h-9 w-32 bg-[#1E293B] rounded-xl"></div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="glass-card p-6 border border-slate-800 bg-[#111A2C] rounded-2xl h-72 space-y-4">
+                    <div class="h-4 w-32 bg-[#1E293B] rounded"></div>
+                    <div class="space-y-2">
+                        <div class="h-10 bg-[#172238] rounded-xl"></div>
+                        <div class="h-10 bg-[#172238] rounded-xl"></div>
+                        <div class="h-10 bg-[#172238] rounded-xl"></div>
+                    </div>
+                </div>
+                <div class="glass-card p-6 border border-slate-800 bg-[#111A2C] rounded-2xl h-72 space-y-4">
+                    <div class="h-4 w-32 bg-[#1E293B] rounded"></div>
+                    <div class="space-y-2">
+                        <div class="h-10 bg-[#172238] rounded-xl"></div>
+                        <div class="h-10 bg-[#172238] rounded-xl"></div>
+                        <div class="h-10 bg-[#172238] rounded-xl"></div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    } else if (viewName === 'assignments' || viewName === 'odevlerim') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                ${[1,2,3,4].map(() => `
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-12 bg-[#1E293B] rounded"></div>
+                </div>`).join('')}
+            </div>
+            <div class="glass-card p-6 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-3">
+                <div class="h-4 w-36 bg-[#1E293B] rounded mb-4"></div>
+                ${[1,2,3,4].map(() => `
+                <div class="h-14 bg-[#172238] rounded-xl w-full border border-[#24314A]/40"></div>`).join('')}
+            </div>
+        </div>`;
+    } else if (viewName === 'raporlar' || viewName === 'reports') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                ${[1,2,3,4].map(() => `
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-16 bg-[#1E293B] rounded"></div>
+                </div>`).join('')}
+            </div>
+            <div class="glass-card p-6 border border-[#24314A] bg-[#111A2C] rounded-2xl h-72">
+                <div class="h-4 w-40 bg-[#1E293B] rounded mb-4"></div>
+                <div class="h-52 bg-[#172238] rounded-xl w-full"></div>
+            </div>
+        </div>`;
+    } else if (viewName === 'kaynak-havuzu' || viewName === 'resources') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                ${[1,2,3,4].map(() => `
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-7 w-12 bg-[#1E293B] rounded"></div>
+                </div>`).join('')}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                ${[1,2,3,4,5,6].map(() => `
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-3">
+                    <div class="h-4 w-32 bg-[#1E293B] rounded"></div>
+                    <div class="h-3 w-48 bg-[#172238] rounded"></div>
+                    <div class="h-8 bg-[#172238] rounded-xl"></div>
+                </div>`).join('')}
+            </div>
+        </div>`;
+    } else if (viewName === 'students') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="grid grid-cols-3 gap-4">
+                ${[1,2,3].map(() => `
+                <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-2">
+                    <div class="h-3 w-20 bg-[#1E293B] rounded"></div>
+                    <div class="h-6 w-10 bg-[#1E293B] rounded"></div>
+                </div>`).join('')}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                ${[1,2,3,4,5,6].map(() => `
+                <div class="glass-card p-5 border border-[#24314A] bg-[#111A2C] rounded-2xl space-y-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-[#1E293B]"></div>
+                        <div class="space-y-1.5 flex-1">
+                            <div class="h-3.5 w-24 bg-[#1E293B] rounded"></div>
+                            <div class="h-2.5 w-16 bg-[#172238] rounded"></div>
+                        </div>
+                    </div>
+                </div>`).join('')}
+            </div>
+        </div>`;
+    } else if (viewName === 'program') {
+        container.innerHTML = `
+        <div class="space-y-6 max-w-7xl mx-auto animate-pulse">
+            <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl flex justify-between items-center">
+                <div class="h-4 w-40 bg-[#1E293B] rounded"></div>
+                <div class="flex gap-2">
+                    <div class="h-8 w-20 bg-[#1E293B] rounded-xl"></div>
+                    <div class="h-8 w-20 bg-[#1E293B] rounded-xl"></div>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-7 gap-3">
+                ${[1,2,3,4,5,6,7].map(() => `
+                <div class="glass-card p-3 border border-[#24314A] bg-[#111A2C] rounded-2xl h-80 space-y-2">
+                    <div class="h-3.5 w-16 bg-[#1E293B] rounded mx-auto"></div>
+                    <div class="h-16 bg-[#172238] rounded-xl"></div>
+                    <div class="h-16 bg-[#172238] rounded-xl"></div>
+                </div>`).join('')}
+            </div>
+        </div>`;
+    } else {
+        container.innerHTML = `
+        <div class="glass-card p-12 text-center border border-slate-800 rounded-2xl flex flex-col items-center justify-center my-6 bg-[#111A2C]">
+            <div class="animate-spin text-indigo-500 mb-3"><i data-lucide="loader-2" class="w-8 h-8"></i></div>
+            <h3 class="text-sm font-bold text-white mb-1">Yükleniyor...</h3>
+        </div>`;
+        if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+    }
+}
+
 // Router & View Management with Strict Route Protection
 async function navigateView(viewName, paramId = null, updateHash = true) {
+    if (window._traceCounters) {
+        window._traceCounters.navigateView++;
+        console.log(`[BOOKS_TRACE] navigateView #${window._traceCounters.navigateView} time=${new Date().toISOString()} viewName=${viewName} paramId=${paramId} currentView=${currentView} selectedStudentId=${selectedStudentId} hash=${window.location.hash}`);
+    }
     toggleNotificationDropdown(false);
     if (!currentUser) {
         showLoginScreen();
@@ -874,14 +1090,19 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
     const container = document.getElementById('viewContainer');
     if (!container) return;
 
-    container.innerHTML = '<div class="flex justify-center p-12"><div class="animate-spin text-indigo-500"><i data-lucide="loader-2" class="w-8 h-8"></i></div></div>';
-    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+    // P6.5A: ZERO-FLICKER CACHE-HIT & P6.5B: SKELETON LOADING
+    const hasCachedData = hasValidClientCacheForView(viewName, paramId);
+    if (!hasCachedData) {
+        showTopNavProgress();
+        renderViewSkeleton(viewName, container);
+    }
 
     try {
         if (viewName === 'dashboard') {
-            if (currentUser && currentUser.role === 'STUDENT') {
+            const user = getCurrentUser();
+            if (user && user.role === 'STUDENT') {
                 await renderStudentDashboard();
-            } else if (currentUser && currentUser.role === 'ADMIN') {
+            } else if (user && user.role === 'ADMIN') {
                 await renderAdminDashboard();
             } else {
                 await renderCoachDashboard();
@@ -891,7 +1112,7 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
         } else if (viewName === 'students') {
             await renderStudentsRiskListView();
         } else if (viewName === 'student-detail') {
-            await renderStudentDetailView(selectedStudentId);
+            await renderStudentDetailView(paramId || selectedStudentId);
         } else if (viewName === 'program') {
             await renderWeeklyProgramView(selectedStudentId);
         } else if (viewName === 'assignments' || viewName === 'odevlerim') {
@@ -907,7 +1128,7 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
         } else if (viewName === 'kaynak-havuzu' || viewName === 'resources') {
             await renderKaynakHavuzuView();
         } else if (viewName === 'books') {
-            await renderBooksView();
+            await renderBooksView(paramId || selectedStudentId);
         } else if (viewName === 'messages') {
             await renderMessagesView();
         } else if (viewName === 'timer') {
@@ -927,6 +1148,8 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
             <p class="text-xs text-slate-400 mt-1">${err.message || 'Ekran yüklenirken beklenmeyen bir hata oluştu.'}</p>
             <button onclick="navigateView('${viewName}')" class="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl">Tekrar Dene</button>
         </div>`;
+    } finally {
+        hideTopNavProgress();
     }
 }
 
@@ -1736,22 +1959,26 @@ async function submitAssignment(e, studentId) {
 // ÖĞRENCİ DETAY VE HAFTALIK PROGRAM ARŞİV/VERSİYONLAMA EKRANI
 // ----------------------------------------------------
 async function renderStudentDetailView(studentId, planId = null) {
-    document.getElementById('pageTitle').textContent = "Öğrenci Profili & Program Paneli";
+    document.getElementById('pageTitle').textContent = "Öğrenci 360° Paneli";
     const token = localStorage.getItem('yks_token');
 
     if (studentId) selectedStudentId = parseInt(studentId);
     if (!selectedStudentId && coachStudentsList.length > 0) selectedStudentId = coachStudentsList[0].id;
     if (!selectedStudentId) selectedStudentId = 1;
 
-    console.log('[STUDENT DETAIL LOAD]', { routeStudentId: studentId, selectedStudentId });
-
     try {
-        const students = await getCoachStudents();
-        const student = students.find(s => s.id == selectedStudentId);
+        const [students, resRep, resAss, resWp, resDash] = await Promise.all([
+            getCoachStudents(),
+            fetch(`${API_BASE}/raporlar?student_id=${selectedStudentId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+            fetch(`${API_BASE}/odevler?student_id=${selectedStudentId}&status=ALL`, { headers: { 'Authorization': `Bearer ${token}` } }),
+            fetch(`${API_BASE}/weekly-program?student_id=${selectedStudentId}`, { headers: { 'Authorization': `Bearer ${token}` } }),
+            fetch(`${API_BASE}/koc/dashboard`, { headers: { 'Authorization': `Bearer ${token}` } })
+        ]);
 
+        const student = students.find(s => s.id == selectedStudentId);
         const container = document.getElementById('viewContainer');
+
         if (!student) {
-            console.log('[STUDENT NOT FOUND]', { routeStudentId: selectedStudentId });
             container.innerHTML = `
             <div class="glass-card p-12 border border-[var(--danger-border)] bg-[var(--danger-soft)] text-center rounded-2xl my-8 shadow-sm">
                 <div class="w-16 h-16 rounded-2xl bg-[var(--bg-card)] border border-[var(--danger-border)] text-[var(--danger)] text-3xl flex items-center justify-center mx-auto mb-4">
@@ -1767,225 +1994,357 @@ async function renderStudentDetailView(studentId, planId = null) {
             return;
         }
 
-        console.log('[STUDENT FOUND]', { id: student.id, name: student.name });
+        const [dataRep, dataAss, dataWp, dataDash] = await Promise.all([
+            resRep.json().catch(() => ({})),
+            resAss.json().catch(() => ({})),
+            resWp.json().catch(() => ({})),
+            resDash.json().catch(() => ({}))
+        ]);
 
-        let urlProg = `${API_BASE}/haftalik-program?student_id=${student.id}`;
-        if (planId) urlProg += `&plan_id=${planId}`;
-        const resProg = await fetch(urlProg, { headers: { 'Authorization': `Bearer ${token}` } });
-        const dataProg = await resProg.json();
+        // Academic Analytics
+        const overallSummary = dataRep.overall_summary || {};
+        const lastNet = overallSummary.last_net !== undefined ? overallSummary.last_net : 0.0;
+        const firstNet = overallSummary.first_net !== undefined ? overallSummary.first_net : 0.0;
+        const netChange = overallSummary.net_change !== undefined ? overallSummary.net_change : 0.0;
+        const avgNet = overallSummary.average_net !== undefined ? overallSummary.average_net : 0.0;
+        const highestNet = overallSummary.highest_net !== undefined ? overallSummary.highest_net : 0.0;
+        const totalExams = overallSummary.total_exams || (dataRep.attempts ? dataRep.attempts.length : 0);
+        const subjectAnalytics = dataRep.subject_analytics || [];
 
-        const resAss = await fetch(`${API_BASE}/odevler?student_id=${student.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
-        const dataAss = await resAss.json();
+        // Assignment Analytics
         const assignments = dataAss.assignments || [];
-        
-        const allPlans = dataProg.all_plans || [];
-        const currentPlan = dataProg.plan || null;
-        const existingItems = dataProg.items || [];
-        if (currentPlan) selectedPlanId = currentPlan.id;
+        const todayStr = new Date().toISOString().split('T')[0];
+        const totalAss = assignments.length;
+        const compAss = assignments.filter(a => a.status === 'COMPLETED' || a.status === 'VERIFIED').length;
+        const pendAss = assignments.filter(a => a.status === 'PENDING').length;
+        const progAss = assignments.filter(a => a.status === 'IN_PROGRESS').length;
+        const lateAss = assignments.filter(a => a.status === 'LATE' || a.status === 'OVERDUE' || (!['COMPLETED', 'VERIFIED', 'CANCELLED', 'SUBMITTED'].includes(a.status) && a.due_date && a.due_date < todayStr)).length;
+        const assRate = totalAss > 0 ? Math.round((compAss / totalAss) * 100) : 0;
 
-        const planMap = {};
-        existingItems.forEach(it => {
-            const key = `${it.day_of_week}_${it.time_slot}`;
-            planMap[key] = it.task_description || '';
-        });
+        // Weekly Program Analytics
+        const wpKpis = dataWp.kpis || {};
+        const wpItems = dataWp.items || [];
+        const wpTotal = wpKpis.total_tasks || wpItems.length;
+        const wpComp = wpKpis.completed_tasks || wpItems.filter(i => i.status === 'TAMAMLANDI').length;
+        const wpPend = wpKpis.pending_tasks || wpItems.filter(i => i.status === 'PLANLANDI').length;
+        const wpRate = wpKpis.compliance_rate !== undefined ? wpKpis.compliance_rate : (wpTotal > 0 ? Math.round((wpComp / wpTotal) * 100) : 0);
 
-        const nextMonday = getNextMondayDate();
+        // Risk & Activity Analytics
+        const dashStudents = dataDash.students || [];
+        const stRisk = dashStudents.find(s => s.id == student.id) || {};
+        const riskLevel = stRisk.risk_level || (lateAss > 0 ? 'ORANGE' : 'GREEN');
+        const riskReasons = stRisk.reasons && stRisk.reasons.length > 0 ? stRisk.reasons : (lateAss > 0 ? [`${lateAss} adet geciken ödev bulunuyor`] : ["Düzenli takip yapılıyor", "Program uyumu stabil"]);
+
+        let riskBadgeClass = "bg-emerald-950/80 text-emerald-400 border-emerald-800";
+        let riskBadgeText = "🟢 Düzenli / Düşük Risk";
+        if (riskLevel === 'RED') {
+            riskBadgeClass = "bg-rose-950/80 text-rose-400 border-rose-800";
+            riskBadgeText = "🔴 Acil Müdahale";
+        } else if (riskLevel === 'ORANGE') {
+            riskBadgeClass = "bg-amber-950/80 text-amber-400 border-amber-800";
+            riskBadgeText = "🟠 Takip Gerekiyor";
+        }
+
+        let progressColor = "bg-indigo-500";
+        if (wpRate >= 80) progressColor = "bg-emerald-500";
+        else if (wpRate < 50) progressColor = "bg-amber-500";
 
         let html = getCoachStudentSwitcherHtml();
         html += `
-        <!-- BACK BUTTON & STUDENT PROFILE BANNER -->
-        <button onclick="navigateView('students')" class="btn-secondary font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 mb-4 shadow-sm">
-            <i data-lucide="arrow-left" class="w-4 h-4"></i> Tüm Öğrencilerime Dön
-        </button>
+        <!-- BACK BUTTON & STUDENT 360 PROFILE BANNER -->
+        <div class="flex items-center justify-between gap-4 mb-4">
+            <button onclick="navigateView('students')" class="btn-secondary font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i> Tüm Öğrencilerime Dön
+            </button>
+            <span class="text-xs font-bold px-3 py-1.5 rounded-xl border ${riskBadgeClass} flex items-center gap-1.5 shadow-sm">
+                ${riskBadgeText}
+            </span>
+        </div>
 
-        <div class="glass-card p-6 border border-[var(--border)] bg-[var(--bg-card)] mb-6 rounded-2xl shadow-sm">
+        <div class="glass-card p-6 border border-slate-800 mb-6 bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 rounded-2xl shadow-xl">
             <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                 <div class="flex items-center gap-4">
-                    <div class="w-14 h-14 rounded-2xl bg-[var(--primary-light-bg)] border border-[var(--primary-border)] flex items-center justify-center text-[var(--primary)] font-black text-xl shadow-sm">
-                        ${student.name.substring(0, 2).toUpperCase()}
+                    <div class="w-14 h-14 rounded-2xl bg-indigo-950/80 border border-indigo-800 flex items-center justify-center text-indigo-400 font-black text-xl shadow-inner shrink-0">
+                        ${escapeHtml(student.name.substring(0, 2).toUpperCase())}
                     </div>
                     <div>
-                        <div class="flex items-center gap-2">
-                            <h2 class="text-xl font-extrabold text-[var(--text-primary)]">${student.name} ${student.surname || ''}</h2>
-                            <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-md bg-[var(--primary-light-bg)] text-[var(--primary)] border border-[var(--primary-border)] uppercase">${student.exam_system || 'YKS'} - ${student.track || 'SAYISAL'}</span>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-2xl font-black text-white tracking-tight">${escapeHtml(student.name)} ${escapeHtml(student.surname || '')}</h2>
+                            <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-800 uppercase tracking-wider">${escapeHtml(student.exam_system || 'YKS')} - ${escapeHtml(student.track || 'SAYISAL')}</span>
                         </div>
-                        <p class="text-xs text-[var(--text-secondary)] mt-1 flex flex-wrap items-center gap-3">
-                            <span>🎯 Hedef: <strong class="text-[var(--success)] font-bold">${student.target_university || 'Hedef Üniversite'} - ${student.target_department || 'Hedef Bölüm'}</strong></span>
-                            <span>| 👨‍🏫 Koç: <strong class="text-[var(--text-primary)] font-bold">${student.coach_name || 'Ümmü Akcan'}</strong></span>
+                        <p class="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-2">
+                            <span>🎯 Hedef: <strong class="text-emerald-400 font-bold">${escapeHtml(student.target_university || 'Hedef Üniversite')} - ${escapeHtml(student.target_department || 'Hedef Bölüm')}</strong></span>
+                            <span class="text-slate-500">|</span>
+                            <span>👨‍🏫 Yetkili Koç: <strong class="text-slate-200 font-bold">${escapeHtml(student.coach_name || 'Ümmü Akcan')}</strong></span>
                         </p>
                     </div>
                 </div>
 
-                <div class="flex items-center gap-2.5 flex-wrap">
-                    <button onclick="openCoachChangeStudentPasswordModal(${student.id}, '${escapeHtml(student.name)}')" class="bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-800 font-bold text-xs px-3.5 py-2.5 rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer" title="Öğrenci Şifresini Yenile">
-                        <i data-lucide="key" class="w-4 h-4"></i> Şifre Değiştir
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button onclick="navigateView('messages'); if (typeof renderMessagesView === 'function') renderMessagesView(${student.user_id || 4});" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow">
+                        <i data-lucide="message-square" class="w-4 h-4"></i> 💬 Mesaj
                     </button>
-                    <button onclick="navigateView('mufredat', ${student.id})" class="btn-primary font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm transition flex items-center gap-2 cursor-pointer">
-                        <i data-lucide="target" class="w-4 h-4"></i> 🎯 Müfredat & Kaynaklar
+                    <button onclick="openAssignModal(${student.id}, '${escapeHtml(student.name)}')" class="bg-indigo-950 hover:bg-indigo-900 text-indigo-200 border border-indigo-800 font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 shadow-sm">
+                        <i data-lucide="book-open-check" class="w-4 h-4"></i> + Ödev Ata
                     </button>
-                    <button onclick="openAssignModal(${student.id}, '${student.name}')" class="btn-secondary font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center gap-2 cursor-pointer">
-                        <i data-lucide="book-open-check" class="w-4 h-4"></i> + Kaynaktan Ödev Ata
+                    <button onclick="openCoachChangeStudentPasswordModal(${student.id}, '${escapeHtml(student.name)}')" class="bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-800 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1 shadow-sm" title="Öğrenci Şifresini Yenile">
+                        <i data-lucide="key" class="w-4 h-4"></i> 🔑 Şifre
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- DETAYLI ÖDEV TAKİP VE ONAY TABLOSU -->
-        <div class="glass-card p-6 border border-slate-800 mb-6">
-            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+        <!-- 360° KPI GRID -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <!-- CARD 1: AKADEMİK PERFORMANS -->
+            <div class="glass-card p-5 border border-slate-800 flex flex-col justify-between">
                 <div>
-                    <h3 class="text-base font-bold text-white flex items-center gap-2">
-                        <i data-lucide="clipboard-check" class="w-5 h-5 text-indigo-400"></i> ${student.name} ÖDEV TAKİP & ONAY PANALİ
-                    </h3>
-                    <p class="text-xs text-slate-400 mt-0.5">Sistem kaynaklarından atanan ödevlerin sayfa aralıkları ve durumları</p>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-400">📊 Akademik Performans</span>
+                        <div class="p-1.5 bg-indigo-950/60 rounded-lg text-indigo-400"><i data-lucide="line-chart" class="w-4 h-4"></i></div>
+                    </div>
+                    <h3 class="text-2xl font-bold text-white mt-2">${lastNet} <span class="text-xs font-normal text-slate-400">son net</span></h3>
+                    <div class="flex items-center gap-2 mt-1 text-[11px]">
+                        <span class="text-slate-400">İlk: ${firstNet}</span>
+                        <span class="text-slate-600">|</span>
+                        <span class="${netChange >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}">${netChange >= 0 ? '+' : ''}${netChange} Δ</span>
+                        <span class="text-slate-600">|</span>
+                        <span class="text-indigo-300">Ort: ${avgNet}</span>
+                    </div>
                 </div>
-                <button onclick="openAssignModal(${student.id}, '${student.name}')" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300">
-                    + Yeni Kaynak Ödevi Ekle
+                <button onclick="navigateView('raporlar', ${student.id})" class="w-full mt-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-indigo-300 font-bold text-[11px] py-1.5 rounded-lg transition text-center">
+                    📊 Akademik Raporları Aç →
                 </button>
             </div>
 
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs text-slate-300 border-collapse">
-                    <thead>
-                        <tr class="bg-slate-900 border-b border-slate-800 text-slate-400 uppercase">
-                            <th class="p-3 border-r border-slate-800">Ödev Başlığı</th>
-                            <th class="p-3 border-r border-slate-800">Kaynak / Kitap</th>
-                            <th class="p-3 border-r border-slate-800">Sayfa / Test Aralığı</th>
-                            <th class="p-3 border-r border-slate-800">Hedef Soru</th>
-                            <th class="p-3 border-r border-slate-800">Son Teslim</th>
-                            <th class="p-3 border-r border-slate-800">Durum</th>
-                            <th class="p-3">Koç Aksiyonu</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-800">
-        `;
-
-        if (assignments.length === 0) {
-            html += `<tr><td colspan="7" class="p-6 text-center text-slate-500">Bu öğrenciye tanımlı ödev bulunamadı. <b>'+ Kaynaktan Ödev Ata'</b> butonundan kaynak ve sayfa aralığı seçerek ödev atayabilirsiniz.</td></tr>`;
-        } else {
-            assignments.forEach(a => {
-                let statusBadge = "bg-slate-800 text-slate-300";
-                if (a.status === 'COMPLETED') statusBadge = "bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold";
-                else if (a.status === 'VERIFIED') statusBadge = "bg-teal-950 text-teal-300 border border-teal-800 font-bold";
-                else if (a.status === 'LATE') statusBadge = "bg-rose-950 text-rose-400 border border-rose-800 font-bold";
-
-                html += `
-                <tr class="hover:bg-slate-800/40">
-                    <td class="p-3 font-semibold text-white border-r border-slate-800">${a.title}</td>
-                    <td class="p-3 text-indigo-400 border-r border-slate-800 font-medium">${a.resource_title || 'Genel Kaynak'}</td>
-                    <td class="p-3 border-r border-slate-800 font-bold text-amber-400">${a.section_range || 'Tüm Kitap'}</td>
-                    <td class="p-3 border-r border-slate-800">${a.target_question_count || 0} Soru</td>
-                    <td class="p-3 border-r border-slate-800">${a.due_date}</td>
-                    <td class="p-3 border-r border-slate-800"><span class="px-2.5 py-1 rounded-md text-[10px] ${statusBadge}">${formatEnumLabel(a.status)}</span></td>
-                    <td class="p-3">
-                        ${a.status !== 'VERIFIED' ? `
-                        <button onclick="verifyAssignment(${a.id}, ${student.id})" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg transition shadow">
-                            ✓ Koç Onayı Ver
-                        </button>` : `<span class="text-teal-400 text-[11px] font-bold">✓ Onaylandı</span>`}
-                    </td>
-                </tr>
-                `;
-            });
-        }
-
-        html += `
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- WEEKLY PROGRAM VERSION & ARCHIVE SELECTOR BAR -->
-        <div class="glass-card p-4 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
-            <div class="flex items-center gap-3 w-full sm:w-auto">
-                <i data-lucide="archive" class="w-5 h-5 text-indigo-400"></i>
-                <label class="text-xs font-bold text-slate-300">Haftalık Program Arşivi:</label>
-                <select id="weekPlanSelect" onchange="switchWeekPlan(${student.id}, this.value)" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
-        `;
-
-        if (allPlans.length === 0) {
-            html += `<option value="">Henüz Kayıtlı Program Yok</option>`;
-        } else {
-            allPlans.forEach(p => {
-                const isSel = (currentPlan && currentPlan.id === p.id) ? 'selected' : '';
-                html += `<option value="${p.id}" ${isSel}>📅 ${p.week_start_date} Haftası Programı (${p.item_count} Ders)</option>`;
-            });
-        }
-
-        html += `
-                </select>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-start sm:justify-end">
-                <button onclick="prepareNewBlankWeekGrid()" class="bg-indigo-900/60 hover:bg-indigo-800 border border-indigo-700 text-indigo-200 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
-                    ➕ Gelecek Hafta Programı
-                </button>
-                <input type="date" id="weekStartDateInput" value="${currentPlan ? currentPlan.week_start_date : nextMonday}" class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white">
-                ${currentPlan ? `<button onclick="deleteWeekPlan(${student.id}, ${currentPlan.id})" class="bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 font-semibold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Sil</button>` : ''}
-            </div>
-        </div>
-
-        <!-- EXCEL-STYLE INTERACTIVE WEEKLY MATRIX GRID EDITOR -->
-        <div class="glass-card p-6 border border-slate-800">
-            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+            <!-- CARD 2: ÖDEV DURUMU -->
+            <div class="glass-card p-5 border border-slate-800 flex flex-col justify-between">
                 <div>
-                    <h3 class="text-base font-bold text-white flex items-center gap-2">
-                        <i data-lucide="table" class="w-5 h-5 text-indigo-400"></i> HAFTALIK DERS PROGRAMI GİRİŞİ (EXCEL GRİD)
-                    </h3>
-                    <p class="text-xs text-slate-400 mt-0.5">O haftaya özel dersleri yazın. İstediğiniz zaman gelecek hafta için yeni program oluşturabilirsiniz.</p>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-400">📋 Ödev Durumu</span>
+                        <div class="p-1.5 bg-indigo-950/60 rounded-lg text-indigo-400"><i data-lucide="clipboard-check" class="w-4 h-4"></i></div>
+                    </div>
+                    <h3 class="text-2xl font-bold text-white mt-2">%${assRate} <span class="text-xs font-normal text-slate-400">tamamlama</span></h3>
+                    <div class="flex items-center gap-2 mt-1 text-[11px]">
+                        <span class="text-emerald-400 font-semibold">${compAss} Tamam</span>
+                        <span class="text-slate-600">|</span>
+                        <span class="text-amber-400">${pendAss} Bekleyen</span>
+                        ${lateAss > 0 ? `<span class="text-slate-600">|</span><span class="text-rose-400 font-bold bg-rose-950/60 px-1.5 py-0.2 rounded border border-rose-800">${lateAss} Geciken</span>` : ''}
+                    </div>
                 </div>
-                
-                <button onclick="clearExcelGrid()" class="text-xs font-semibold text-rose-400 hover:text-rose-300">
-                    🗑 Hücreleri Temizle
+                <button onclick="navigateView('assignments')" class="w-full mt-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-indigo-300 font-bold text-[11px] py-1.5 rounded-lg transition text-center">
+                    📋 Ödevleri Gör →
                 </button>
             </div>
 
-            <div class="overflow-x-auto overflow-y-auto max-h-[600px] border border-slate-800 rounded-2xl bg-slate-950/60 shadow-2xl">
-                <table class="w-full text-left text-xs border-collapse" id="excelProgramGrid">
-                    <thead class="sticky top-0 z-10 shadow-md">
-                        <tr class="bg-slate-900 border-b border-slate-800 text-slate-400">
-                            <th class="p-3.5 border-r border-slate-800 w-36 font-bold text-center bg-slate-900 sticky left-0 z-20 text-indigo-400">SAAT DİLİMİ</th>
-                            ${DAYS_LIST.map(day => `<th class="p-3.5 border-r border-slate-800 font-bold text-white text-center min-w-[160px] bg-slate-900">${day}</th>`).join('')}
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-800/80">
-        `;
-
-        TIME_SLOTS.forEach(slot => {
-            html += `<tr class="hover:bg-slate-900/40">`;
-            html += `<td class="p-3 font-bold text-indigo-400 border-r border-slate-800 text-center bg-slate-950/40 text-[11px]">${slot}</td>`;
-
-            DAYS_LIST.forEach(day => {
-                const cellKey = `${day}_${slot}`;
-                const val = planMap[cellKey] || '';
-                html += `
-                <td class="p-1 border-r border-slate-800/80">
-                    <input type="text" 
-                           data-day="${day}" 
-                           data-slot="${slot}" 
-                           value="${val}" 
-                           placeholder="+ Ders / Görev..." 
-                           class="w-full bg-slate-900/50 hover:bg-slate-800/60 focus:bg-slate-800 focus:ring-2 focus:ring-indigo-500 border border-transparent focus:border-indigo-500 rounded-lg px-2.5 py-2 text-xs text-white transition placeholder:text-slate-600 focus:outline-none">
-                </td>
-                `;
-            });
-            html += `</tr>`;
-        });
-
-        html += `
-                    </tbody>
-                </table>
+            <!-- CARD 3: HAFTALIK PROGRAM -->
+            <div class="glass-card p-5 border border-slate-800 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-400">📅 Haftalık Program</span>
+                        <div class="p-1.5 bg-indigo-950/60 rounded-lg text-indigo-400"><i data-lucide="calendar" class="w-4 h-4"></i></div>
+                    </div>
+                    <h3 class="text-2xl font-bold text-white mt-2">%${wpRate} <span class="text-xs font-normal text-slate-400">uyum</span></h3>
+                    <div class="w-full bg-slate-800 rounded-full h-1.5 mt-2 overflow-hidden">
+                        <div class="${progressColor} h-1.5 rounded-full" style="width: ${Math.min(wpRate, 100)}%"></div>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-1">${wpComp} / ${wpTotal} görev tamamlandı</p>
+                </div>
+                <button onclick="navigateView('program', ${student.id})" class="w-full mt-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-indigo-300 font-bold text-[11px] py-1.5 rounded-lg transition text-center">
+                    📅 Programa Git →
+                </button>
             </div>
 
-            <div class="mt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-xs text-slate-400">
-                <span>💡 Hücreler arasında <b>Tab</b> tuşu ile ilerleyebilirsiniz. Her hafta için ayrı kaydedilir.</span>
-                <button onclick="saveExcelStyleGrid(${student.id})" class="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2.5 rounded-xl shadow transition">
-                    💾 Programı Kaydet & Öğrenciye Ata
+            <!-- CARD 4: ÇALIŞMA & RİSK -->
+            <div class="glass-card p-5 border border-slate-800 flex flex-col justify-between">
+                <div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-400">🎯 Çalışma & Risk</span>
+                        <div class="p-1.5 bg-indigo-950/60 rounded-lg text-indigo-400"><i data-lucide="shield-alert" class="w-4 h-4"></i></div>
+                    </div>
+                    <h3 class="text-2xl font-bold text-white mt-2">${riskLevel === 'GREEN' ? 'Düşük Risk' : (riskLevel === 'RED' ? 'Yüksek Risk' : 'Orta Risk')}</h3>
+                    <p class="text-[11px] text-slate-300 mt-1 line-clamp-2">${escapeHtml(riskReasons[0] || 'Düzenli takip ediliyor')}</p>
+                </div>
+                <button onclick="navigateView('mufredat', ${student.id})" class="w-full mt-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-indigo-300 font-bold text-[11px] py-1.5 rounded-lg transition text-center">
+                    🎯 Müfredat & Kaynaklar →
                 </button>
+            </div>
+        </div>
+
+        <!-- HIZLI KOÇ AKSİYONLARI BAR -->
+        <div class="glass-card p-4 border border-slate-800 mb-6 flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 rounded-2xl">
+            <span class="text-xs font-bold text-indigo-400 flex items-center gap-1.5">
+                <i data-lucide="zap" class="w-4 h-4"></i> ⚡ Hızlı Koç Aksiyonları:
+            </span>
+            <div class="flex items-center gap-2 flex-wrap">
+                <button onclick="navigateView('messages'); if (typeof renderMessagesView === 'function') renderMessagesView(${student.user_id || 4});" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1">
+                    💬 Mesaj Gönder
+                </button>
+                <button onclick="openAssignModal(${student.id}, '${escapeHtml(student.name)}')" class="bg-indigo-950 hover:bg-indigo-900 border border-indigo-800 text-indigo-200 font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1">
+                    📋 Ödev Ata
+                </button>
+                <button onclick="navigateView('program', ${student.id})" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1">
+                    📅 Programa Git
+                </button>
+                <button onclick="navigateView('raporlar', ${student.id})" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1">
+                    📊 Raporları Aç
+                </button>
+                <button onclick="navigateView('mufredat', ${student.id})" class="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1">
+                    🎯 Müfredat
+                </button>
+            </div>
+        </div>
+
+        <!-- 2-COLUMN DASHBOARD BODY -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- LEFT COLUMN: AKADEMİK GELİŞİM & RİSK -->
+            <div class="space-y-6">
+                <!-- AKADEMİK GELİŞİM PANELİ -->
+                <div class="glass-card p-6 border border-slate-800 rounded-2xl">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                            <i data-lucide="trending-up" class="w-4 h-4 text-indigo-400"></i> 📈 Akademik Gelişim & Ders Analitiği
+                        </h3>
+                        <button onclick="navigateView('raporlar', ${student.id})" class="text-xs font-bold text-indigo-400 hover:text-indigo-300">
+                            Detaylı Rapor →
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-3 mb-4 text-center">
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-[10px] text-slate-400 block font-semibold">Toplam Deneme</span>
+                            <span class="text-base font-bold text-white">${totalExams}</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-[10px] text-slate-400 block font-semibold">En Yüksek Net</span>
+                            <span class="text-base font-bold text-emerald-400">${highestNet}</span>
+                        </div>
+                        <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                            <span class="text-[10px] text-slate-400 block font-semibold">Net Değişimi</span>
+                            <span class="text-base font-bold ${netChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${netChange >= 0 ? '+' : ''}${netChange}</span>
+                        </div>
+                    </div>
+
+                    ${subjectAnalytics.length === 0 ? `
+                    <div class="p-4 text-center text-xs text-slate-500 rounded-xl bg-slate-900/40 border border-dashed border-slate-800">
+                        Henüz ders bazlı deneme verisi girilmemiş.
+                    </div>
+                    ` : `
+                    <div class="space-y-2">
+                        ${subjectAnalytics.slice(0, 5).map(s => `
+                        <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                            <span class="font-bold text-white">${escapeHtml(s.subject_name)}</span>
+                            <div class="flex items-center gap-3">
+                                <span class="text-slate-300 font-semibold">${s.average_net} Net</span>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded ${s.trend === 'UP' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : (s.trend === 'DOWN' ? 'bg-rose-950 text-rose-400 border border-rose-800' : 'bg-slate-800 text-slate-400')}">
+                                    ${s.trend === 'UP' ? '↗ Yükselişte' : (s.trend === 'DOWN' ? '↘ Düşüşte' : '→ Stabil')}
+                                </span>
+                            </div>
+                        </div>
+                        `).join('')}
+                    </div>
+                    `}
+                </div>
+
+                <!-- RİSK DURUMU PANELİ -->
+                <div class="glass-card p-6 border border-slate-800 rounded-2xl">
+                    <h3 class="text-sm font-bold text-white flex items-center gap-2 mb-3">
+                        <i data-lucide="shield-check" class="w-4 h-4 text-indigo-400"></i> 🚦 Öğrenci Risk & Takip Durumu
+                    </h3>
+                    <div class="space-y-2">
+                        ${riskReasons.map(r => `
+                        <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex items-start gap-2.5 text-xs text-slate-300">
+                            <span class="text-indigo-400 mt-0.5">•</span>
+                            <span>${escapeHtml(r)}</span>
+                        </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: SON ÖDEVLER & PROGRAM -->
+            <div class="space-y-6">
+                <!-- SON ÖDEVLER & KOÇ ONAYI -->
+                <div class="glass-card p-6 border border-slate-800 rounded-2xl">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                            <i data-lucide="file-check-2" class="w-4 h-4 text-indigo-400"></i> 📋 Son Ödevler & Koç Onayı
+                        </h3>
+                        <button onclick="navigateView('assignments')" class="text-xs font-bold text-indigo-400 hover:text-indigo-300">
+                            Ödevlerin Tümünü Gör →
+                        </button>
+                    </div>
+
+                    ${assignments.length === 0 ? `
+                    <div class="p-6 text-center text-xs text-slate-500 rounded-xl bg-slate-900/40 border border-dashed border-slate-800">
+                        Bu öğrenciye tanımlı ödev bulunamadı. "+ Ödev Ata" butonunu kullanarak yeni ödev tanımlayabilirsiniz.
+                    </div>
+                    ` : `
+                    <div class="space-y-3">
+                        ${assignments.slice(0, 5).map(a => {
+                            let badgeCls = "bg-slate-800 text-slate-400";
+                            if (a.status === 'COMPLETED') badgeCls = "bg-emerald-950 text-emerald-400 border border-emerald-800";
+                            else if (a.status === 'VERIFIED') badgeCls = "bg-teal-950 text-teal-300 border border-teal-800";
+                            else if (a.status === 'LATE' || a.status === 'OVERDUE') badgeCls = "bg-rose-950 text-rose-400 border border-rose-800";
+                            else if (a.status === 'IN_PROGRESS') badgeCls = "bg-blue-950 text-blue-400 border border-blue-800";
+
+                            return `
+                            <div class="bg-slate-900/70 p-3.5 rounded-xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                                <div>
+                                    <h4 class="font-bold text-white text-xs">${escapeHtml(a.title)}</h4>
+                                    <p class="text-[11px] text-indigo-300 mt-0.5">${escapeHtml(a.subject_name || 'Genel')} | ${escapeHtml(a.section_range || 'Tüm')} | Teslim: ${escapeHtml(a.due_date || 'Belirtilmedi')}</p>
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <span class="text-[10px] font-bold px-2 py-0.5 rounded border ${badgeCls}">${formatEnumLabel(a.status)}</span>
+                                    ${a.status !== 'VERIFIED' ? `
+                                    <button onclick="verifyAssignment(${a.id}, ${student.id})" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] px-2.5 py-1 rounded-lg transition shadow">
+                                        ✓ Onayla
+                                    </button>
+                                    ` : `<span class="text-teal-400 text-[10px] font-bold">✓ Onaylı</span>`}
+                                </div>
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    `}
+                </div>
+
+                <!-- BU HAFTANIN PROGRAMI -->
+                <div class="glass-card p-6 border border-slate-800 rounded-2xl">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                            <i data-lucide="calendar" class="w-4 h-4 text-indigo-400"></i> 📅 Bu Haftanın Programı
+                        </h3>
+                        <button onclick="navigateView('program', ${student.id})" class="text-xs font-bold text-indigo-400 hover:text-indigo-300">
+                            Tam Haftalık Programı Aç →
+                        </button>
+                    </div>
+
+                    ${wpItems.length === 0 ? `
+                    <div class="p-6 text-center text-xs text-slate-500 rounded-xl bg-slate-900/40 border border-dashed border-slate-800">
+                        Bu haftaya ait planlanmış görev bulunmuyor. "Tam Haftalık Programı Aç" butonuna basarak Excel Grid üzerinden yeni görevler ekleyebilirsiniz.
+                    </div>
+                    ` : `
+                    <div class="space-y-2">
+                        ${wpItems.slice(0, 5).map(it => `
+                        <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
+                            <div>
+                                <span class="font-bold text-white">${escapeHtml(it.title || 'Çalışma Görevi')}</span>
+                                <p class="text-[10px] text-slate-400">${escapeHtml(it.day_of_week || '')} ${escapeHtml(it.start_time || '')} - ${escapeHtml(it.end_time || '')} | ${escapeHtml(it.subject_name || 'Genel')}</p>
+                            </div>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded ${it.status === 'TAMAMLANDI' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-slate-800 text-slate-400'}">
+                                ${it.status === 'TAMAMLANDI' ? '✓ Tamamlandı' : (it.status === 'DEVAM_EDIYOR' ? '▶ Devam Ediyor' : 'Planlandı')}
+                            </span>
+                        </div>
+                        `).join('')}
+                    </div>
+                    `}
+                </div>
             </div>
         </div>
         `;
 
-        document.getElementById('viewContainer').innerHTML = html;
+        container.innerHTML = html;
         if (window.lucide) lucide.createIcons();
     } catch (err) {
         console.error("renderStudentDetailView error:", err);
@@ -3139,56 +3498,524 @@ function openDenemeCompareModal() {
 }
 
 // ----------------------------------------------------
-// 8. KİTAP OKUMA TAKİBİ
+// 8. KİTAP OKUMA & KÜTÜPHANE YÖNETİMİ
 // ----------------------------------------------------
-async function renderBooksView() {
-    document.getElementById('pageTitle').textContent = "Kitap Okuma Takibi";
+let currentBooksTab = 'ALL';
+let activeReadingTimerState = {
+    isActive: false,
+    bookId: null,
+    bookTitle: '',
+    startPage: 0,
+    totalPages: 0,
+    startTime: null,
+    secondsElapsed: 0,
+    interval: null,
+    isPaused: false
+};
+
+function switchBooksTab(tabName) {
+    currentBooksTab = tabName;
+    renderBooksView();
+}
+
+async function renderBooksView(studentId = null) {
+    if (window._traceCounters) {
+        window._traceCounters.renderBooksView++;
+    }
+    document.getElementById('pageTitle').textContent = "📚 Kitap Okuma & Kütüphane Yönetimi";
     const token = localStorage.getItem('yks_token');
+    const container = document.getElementById('viewContainer');
+    if (!container) return;
 
-    try {
-        const res = await fetch(`${API_BASE}/kitaplar?student_id=${selectedStudentId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        const books = data.books || [];
+    let targetStudentId;
+    if (currentUser && currentUser.role === 'STUDENT') {
+        targetStudentId = currentUser.student_id || (currentUser.student_info ? currentUser.student_info.id : 1);
+    } else if (studentId && !isNaN(parseInt(studentId))) {
+        targetStudentId = parseInt(studentId);
+        selectedStudentId = targetStudentId;
+    } else if (selectedStudentId && !isNaN(parseInt(selectedStudentId))) {
+        targetStudentId = parseInt(selectedStudentId);
+    } else if (coachStudentsList && coachStudentsList.length > 0) {
+        targetStudentId = coachStudentsList[0].id;
+        selectedStudentId = targetStudentId;
+    } else {
+        targetStudentId = 1;
+    }
 
-        let html = getCoachStudentSwitcherHtml();
-        html += `
-        <div class="flex justify-between items-center mb-4">
-            <p class="text-xs text-slate-400">Seçili Öğrencinin Okuma İlerlemesi</p>
-            <button onclick="openAddBookModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md">
-                <i data-lucide="plus-circle" class="w-4 h-4"></i> + Kitap Ekle
+    const booksEndpoint = `/kitaplar?student_id=${targetStudentId}`;
+    const cachedBooks = getFromClientCache(booksEndpoint, 60000);
+    let data = null;
+
+    if (cachedBooks && !cachedBooks.isStale) {
+        data = cachedBooks.data;
+    } else {
+        try {
+            if (window._traceCounters) {
+                window._traceCounters.fetchKitaplar++;
+            }
+            const res = await fetch(`${API_BASE}${booksEndpoint}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!res.ok) {
+                throw new Error(`Kitap verileri yüklenemedi (HTTP ${res.status})`);
+            }
+
+            data = await res.json();
+            setClientCache(booksEndpoint, data);
+        } catch (err) {
+            console.error("renderBooksView error:", err);
+            container.innerHTML = `
+            <div class="glass-card p-12 text-center border border-rose-800 rounded-2xl flex flex-col items-center justify-center my-6">
+                <div class="text-rose-500 mb-3"><i data-lucide="alert-circle" class="w-8 h-8"></i></div>
+                <h3 class="text-sm font-bold text-white mb-1">Kitap Okuma Yükleme Hatası</h3>
+                <p class="text-xs text-slate-400">${err.message || 'Kitap verileri yüklenirken bir sorun oluştu.'}</p>
+                <button onclick="renderBooksView()" class="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl transition">Yeniden Dene</button>
+            </div>
+            `;
+            if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+            return;
+        }
+    }
+
+    const books = (data && data.books) || [];
+    const stats = (data && data.stats) || {
+        total_books_read: 0,
+        total_pages_read: 0,
+        active_reading_count: 0,
+        weekly_pages_read: 0,
+        weekly_minutes_read: 0,
+        total_reading_minutes: 0,
+        reading_streak_days: 0,
+        daily_breakdown: []
+    };
+    const goals = (data && data.goals) || {
+        target_books_count: 2,
+        target_pages_monthly: 400,
+        completed_pages_this_month: 0,
+        completed_books_this_month: 0,
+        month_name: 'Ağustos'
+    };
+    const recentSessions = (data && data.recent_sessions) || [];
+
+    // Filter books based on tab
+    let filteredBooks = books;
+    if (currentBooksTab === 'IN_PROGRESS') {
+        filteredBooks = books.filter(b => b.status === 'IN_PROGRESS');
+    } else if (currentBooksTab === 'COMPLETED') {
+        filteredBooks = books.filter(b => b.status === 'COMPLETED');
+    } else if (currentBooksTab === 'TO_READ') {
+        filteredBooks = books.filter(b => b.status === 'TO_READ');
+    }
+
+    const weeklyHours = Math.floor(stats.weekly_minutes_read / 60);
+    const weeklyMins = stats.weekly_minutes_read % 60;
+    const monthlyPercent = goals.target_pages_monthly > 0 
+        ? Math.min(100, Math.round((goals.completed_pages_this_month / goals.target_pages_monthly) * 100))
+        : 0;
+
+    let html = getCoachStudentSwitcherHtml();
+
+    // 1. Header Toolbar
+    html += `
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div>
+            <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+                📖 Okuma & Kütüphane Takibi
+            </h2>
+            <p class="text-xs text-slate-400 mt-0.5">Düzenli kitap okuma alışkanlığı, paragraf ve anlama hızını %40'a kadar artırır.</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="openReadingGoalsModal(${goals.target_books_count}, ${goals.target_pages_monthly})" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 border border-slate-700 shadow-sm">
+                <i data-lucide="target" class="w-4 h-4 text-emerald-400"></i> Hedef Belirle
+            </button>
+            <button onclick="openAddBookModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow-lg shadow-indigo-600/30">
+                <i data-lucide="plus-circle" class="w-4 h-4"></i> + Yeni Kitap Ekle
             </button>
         </div>
+    </div>
+    `;
 
-        <div class="glass-card p-6 border border-slate-800">
-            <h3 class="text-sm font-bold text-white mb-4">📚 Okunan Kitaplar & Derecelendirme</h3>
-            <div class="space-y-3">
-        `;
+    // 2. Active Reading Timer Widget (if running)
+    if (activeReadingTimerState.isActive) {
+        const timerMinutes = Math.floor(activeReadingTimerState.secondsElapsed / 60);
+        const timerSecs = activeReadingTimerState.secondsElapsed % 60;
+        const timeDisplay = `${String(timerMinutes).padStart(2, '0')}:${String(timerSecs).padStart(2, '0')}`;
+        const estimatedPages = Math.max(1, Math.floor(activeReadingTimerState.secondsElapsed / 75));
+        const estimatedSpeed = activeReadingTimerState.secondsElapsed > 30 
+            ? Math.round((estimatedPages / (activeReadingTimerState.secondsElapsed / 3600)))
+            : 45;
 
-        if (books.length === 0) {
-            html += `<p class="text-xs text-slate-500 text-center py-4">Bu öğrenci için henüz kitap kaydı bulunmuyor.</p>`;
-        } else {
-            books.forEach(b => {
-                const stars = '⭐️'.repeat(b.rating_stars || 5);
-                html += `
-                <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
-                    <div>
-                        <h4 class="font-bold text-xs text-white">${b.title}</h4>
-                        <p class="text-[11px] text-slate-400">${b.author} | Okunan: ${b.read_pages} / ${b.total_pages} sayfa</p>
+        html += `
+        <div data-reading-timer class="glass-card p-5 mb-6 border border-emerald-500/40 bg-gradient-to-r from-emerald-950/40 via-slate-900/60 to-indigo-950/40 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-3.5">
+                <div class="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 ${activeReadingTimerState.isPaused ? '' : 'animate-pulse'}">
+                    <i data-lucide="timer" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            ${activeReadingTimerState.isPaused ? '⏸ DURAKLATILDI' : '⏱ CANLI OKUMA OTURUMU'}
+                        </span>
+                        <span class="text-xs text-slate-400">Başlangıç: ${activeReadingTimerState.startPage}. Sayfa</span>
                     </div>
-                    <div class="text-amber-400 text-xs">${stars}</div>
+                    <h3 class="text-base font-bold text-white mt-0.5">${activeReadingTimerState.bookTitle}</h3>
+                </div>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-4">
+                <!-- Stopwatch Display -->
+                <div class="text-center">
+                    <div class="text-2xl font-black font-mono text-emerald-400 bg-slate-950/80 px-4 py-1.5 rounded-xl border border-emerald-500/30" id="liveReadingTimerClock">
+                        ⏱ ${timeDisplay}
+                    </div>
+                    <span class="text-[10px] text-slate-400 mt-0.5 block">Geçen Süre</span>
+                </div>
+
+                <!-- Estimated Reading Stats -->
+                <div class="flex items-center gap-2 bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
+                    <span class="text-indigo-300 font-bold flex items-center gap-1" id="liveReadingPagesEst">
+                        <i data-lucide="book-open" class="w-3.5 h-3.5 text-indigo-400"></i> ~${estimatedPages} sf
+                    </span>
+                    <span class="text-slate-600">|</span>
+                    <span class="text-amber-300 font-bold flex items-center gap-1" id="liveReadingSpeedEst">
+                        <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i> ${estimatedSpeed} sf/saat
+                    </span>
+                </div>
+
+                <!-- Controls -->
+                <button onclick="togglePauseReadingTimer()" class="px-3 py-2 rounded-xl ${activeReadingTimerState.isPaused ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-700'} font-bold text-xs transition flex items-center gap-1">
+                    <i data-lucide="${activeReadingTimerState.isPaused ? 'play' : 'pause'}" class="w-4 h-4"></i>
+                    ${activeReadingTimerState.isPaused ? 'Devam Et' : 'Duraklat'}
+                </button>
+                <button onclick="finishActiveReadingTimer()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-emerald-600/30">
+                    <i data-lucide="check-circle" class="w-4 h-4"></i> Okumayı Bitir
+                </button>
+            </div>
+        </div>
+        `;
+    }
+
+    // 3. KPI Overview Cards (4 Kart)
+    html += `
+    <div data-books-kpi class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <!-- 1. Tamamlanan Kitap -->
+        <div class="glass-card p-4 rounded-2xl border border-slate-800 bg-slate-900/50">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-slate-400 font-medium">📚 Tamamlanan Kitap</span>
+                <span class="p-2 rounded-xl bg-indigo-500/10 text-indigo-400"><i data-lucide="book-check" class="w-4 h-4"></i></span>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <span class="text-2xl font-black text-white">${stats.total_books_read}</span>
+                <span class="text-xs text-slate-500">/ ${goals.target_books_count} hedef</span>
+            </div>
+            <p class="text-[11px] text-indigo-400/80 mt-1">${stats.active_reading_count} kitap şu an okunuyor</p>
+        </div>
+
+        <!-- 2. Bu Hafta Okunan Sayfa -->
+        <div class="glass-card p-4 rounded-2xl border border-slate-800 bg-slate-900/50">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-slate-400 font-medium">📖 Bu Hafta Okunan</span>
+                <span class="p-2 rounded-xl bg-emerald-500/10 text-emerald-400"><i data-lucide="layers" class="w-4 h-4"></i></span>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <span class="text-2xl font-black text-white">${stats.weekly_pages_read}</span>
+                <span class="text-xs text-slate-500">sayfa</span>
+            </div>
+            <p class="text-[11px] text-emerald-400/80 mt-1">Toplam: ${stats.total_pages_read} sayfa okundu</p>
+        </div>
+
+        <!-- 3. Bu Hafta Okuma Süresi -->
+        <div class="glass-card p-4 rounded-2xl border border-slate-800 bg-slate-900/50">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-slate-400 font-medium">⏱ Bu Hafta Okuma</span>
+                <span class="p-2 rounded-xl bg-amber-500/10 text-amber-400"><i data-lucide="clock" class="w-4 h-4"></i></span>
+            </div>
+            <div class="flex items-baseline gap-1.5">
+                <span class="text-2xl font-black text-white">${weeklyHours > 0 ? `${weeklyHours}s ` : ''}${weeklyMins}</span>
+                <span class="text-xs text-slate-500">dakika</span>
+            </div>
+            <p class="text-[11px] text-amber-400/80 mt-1">Toplam: ${Math.floor(stats.total_reading_minutes / 60)}s ${stats.total_reading_minutes % 60}dk</p>
+        </div>
+
+        <!-- 4. Okuma Serisi (Streak) -->
+        <div class="glass-card p-4 rounded-2xl border border-slate-800 bg-slate-900/50">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-slate-400 font-medium">🔥 Okuma Serisi</span>
+                <span class="p-2 rounded-xl bg-rose-500/10 text-rose-400"><i data-lucide="flame" class="w-4 h-4"></i></span>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <span class="text-2xl font-black text-white">${stats.reading_streak_days}</span>
+                <span class="text-xs text-slate-500">gün Streak</span>
+            </div>
+            <p class="text-[11px] text-rose-400/80 mt-1">${stats.reading_streak_days >= 3 ? '🔥 Harika bir ivme yakaladın!' : '🎯 Her gün 20 sayfa okuyarak seriyi başlat!'}</p>
+        </div>
+    </div>
+    `;
+
+    // 4. Monthly Goal & Weekly 7-Day Activity Chart
+    html += `
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <!-- Monthly Goal Card -->
+        <div data-reading-goals class="glass-card p-5 rounded-2xl border border-slate-800 bg-slate-900/40 flex flex-col justify-between">
+            <div>
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <i data-lucide="target" class="w-4 h-4 text-emerald-400"></i> ${goals.month_name} Hedefi
+                    </h3>
+                    <span class="text-xs font-extrabold text-emerald-400">%${monthlyPercent}</span>
+                </div>
+                <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden mb-3">
+                    <div class="bg-gradient-to-r from-indigo-500 to-emerald-400 h-full rounded-full transition-all duration-500" style="width: ${monthlyPercent}%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-slate-400">
+                    <span>${goals.completed_pages_this_month} / ${goals.target_pages_monthly} sayfa</span>
+                    <span>${goals.completed_books_this_month} / ${goals.target_books_count} kitap</span>
+                </div>
+            </div>
+            <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                <span class="text-slate-500">Kalan: ${Math.max(0, goals.target_pages_monthly - goals.completed_pages_this_month)} sayfa</span>
+                <button onclick="openReadingGoalsModal(${goals.target_books_count}, ${goals.target_pages_monthly})" class="text-indigo-400 hover:text-indigo-300 font-bold">Hedefi Değiştir</button>
+            </div>
+        </div>
+
+        <!-- Weekly 7-Day Activity Chart -->
+        <div data-reading-chart class="lg:col-span-2 glass-card p-5 rounded-2xl border border-slate-800 bg-slate-900/40">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <i data-lucide="bar-chart-2" class="w-4 h-4 text-indigo-400"></i> Son 7 Günlük Okuma Aktivitesi
+                </h3>
+                <span class="text-[11px] text-slate-400">Haftalık: ${stats.weekly_pages_read} sayfa / ${stats.weekly_minutes_read} dk</span>
+            </div>
+            <div class="grid grid-cols-7 gap-2 items-end h-24 pt-2">
+    `;
+
+    const maxDayPages = Math.max(...(stats.daily_breakdown.map(d => d.pages)), 50);
+    stats.daily_breakdown.forEach(d => {
+        const heightPercent = Math.max(8, Math.min(100, Math.round((d.pages / maxDayPages) * 100)));
+        const isToday = d.date === new Date().toISOString().split('T')[0];
+        html += `
+        <div class="flex flex-col items-center gap-1.5 h-full justify-end group">
+            <span class="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition">${d.pages}s</span>
+            <div class="w-full rounded-lg transition-all duration-300 ${isToday ? 'bg-indigo-500' : d.pages > 0 ? 'bg-emerald-500/80 hover:bg-emerald-400' : 'bg-slate-800'}" style="height: ${heightPercent}%"></div>
+            <span class="text-[10px] font-bold ${isToday ? 'text-indigo-400' : 'text-slate-400'}">${d.day_name}</span>
+        </div>
+        `;
+    });
+
+    html += `</div></div></div>`;
+
+    // 5. Tabs Navigation
+    const inProgressCount = books.filter(b => b.status === 'IN_PROGRESS').length;
+    const completedCount = books.filter(b => b.status === 'COMPLETED').length;
+    const toReadCount = books.filter(b => b.status === 'TO_READ').length;
+
+    html += `
+    <div data-books-tabs class="flex border-b border-slate-800 mb-6 gap-2 overflow-x-auto">
+        <button onclick="switchBooksTab('ALL')" class="px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-1.5 ${currentBooksTab === 'ALL' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10 rounded-t-xl' : 'border-transparent text-slate-400 hover:text-white'}">
+            Tüm Kitaplar (${books.length})
+        </button>
+        <button onclick="switchBooksTab('IN_PROGRESS')" class="px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-1.5 ${currentBooksTab === 'IN_PROGRESS' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10 rounded-t-xl' : 'border-transparent text-slate-400 hover:text-white'}">
+            📖 Okunuyor (${inProgressCount})
+        </button>
+        <button onclick="switchBooksTab('COMPLETED')" class="px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-1.5 ${currentBooksTab === 'COMPLETED' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10 rounded-t-xl' : 'border-transparent text-slate-400 hover:text-white'}">
+            🏆 Tamamlananlar (${completedCount})
+        </button>
+        <button onclick="switchBooksTab('TO_READ')" class="px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-1.5 ${currentBooksTab === 'TO_READ' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10 rounded-t-xl' : 'border-transparent text-slate-400 hover:text-white'}">
+            📌 Okunacaklar (${toReadCount})
+        </button>
+        <button onclick="switchBooksTab('SESSIONS')" class="px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-1.5 ${currentBooksTab === 'SESSIONS' ? 'border-indigo-500 text-indigo-400 bg-indigo-500/10 rounded-t-xl' : 'border-transparent text-slate-400 hover:text-white'}">
+            ⏱ Okuma Geçmişi (${recentSessions.length})
+        </button>
+    </div>
+    `;
+
+    // 6. Tab Contents
+    if (currentBooksTab === 'SESSIONS') {
+        // Sessions list (Tarih | Kitap | Süre | Okunan Sayfa | Sayfa/Saat)
+        if (recentSessions.length === 0) {
+            html += `
+            <div data-reading-history class="glass-card p-12 text-center border border-slate-800 rounded-2xl">
+                <i data-lucide="timer" class="w-10 h-10 text-slate-600 mx-auto mb-3"></i>
+                <h4 class="text-sm font-bold text-white">Henüz Okuma Oturumu Kaydedilmedi</h4>
+                <p class="text-xs text-slate-400 mt-1">Okuduğunuz kitapların yanındaki "Okumaya Başla / Canlı Oku" butonuna basarak seans başlatabilirsiniz.</p>
+            </div>
+            `;
+        } else {
+            html += `
+            <div data-reading-history class="glass-card rounded-2xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-950/60 border-b border-slate-800 text-slate-400 font-semibold uppercase text-[10px]">
+                            <tr>
+                                <th class="p-3.5">Tarih</th>
+                                <th class="p-3.5">Kitap</th>
+                                <th class="p-3.5">Süre</th>
+                                <th class="p-3.5">Okunan Sayfa</th>
+                                <th class="p-3.5">Sayfa / Saat</th>
+                                <th class="p-3.5">Notlar</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/60 text-slate-300">
+            `;
+            recentSessions.forEach(s => {
+                const sDate = s.session_date ? new Date(s.session_date).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : 'Bilinmiyor';
+                const speed = s.duration_minutes > 0 ? Math.round((s.pages_read || 0) / (s.duration_minutes / 60)) : 0;
+                html += `
+                <tr class="hover:bg-slate-800/30 transition">
+                    <td class="p-3.5 text-slate-400 whitespace-nowrap">${sDate}</td>
+                    <td class="p-3.5 font-bold text-white">
+                        <div>${escapeHtml(s.book_title || 'Kitap')}</div>
+                        <div class="text-[10px] text-slate-500">${escapeHtml(s.book_author || '')}</div>
+                    </td>
+                    <td class="p-3.5 whitespace-nowrap text-amber-400 font-medium">${s.duration_minutes || 0} dk</td>
+                    <td class="p-3.5 whitespace-nowrap">
+                        <span class="font-bold text-emerald-400">+${s.pages_read || 0} sayfa</span>
+                        <div class="text-[10px] text-slate-500">${s.start_page} ➔ ${s.end_page}. sf</div>
+                    </td>
+                    <td class="p-3.5 whitespace-nowrap">
+                        <span class="font-bold text-indigo-400">${speed} sayfa/saat</span>
+                    </td>
+                    <td class="p-3.5 text-slate-400 max-w-xs truncate" title="${escapeHtml(s.notes || '')}">
+                        ${s.notes ? escapeHtml(s.notes) : '<span class="text-slate-600">-</span>'}
+                    </td>
+                </tr>
+                `;
+            });
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            `;
+        }
+    } else {
+        // Books Grid
+        if (filteredBooks.length === 0) {
+            html += `
+            <div class="glass-card p-12 text-center border border-slate-800 rounded-2xl">
+                <i data-lucide="book-open" class="w-10 h-10 text-slate-600 mx-auto mb-3"></i>
+                <h4 class="text-sm font-bold text-white">Bu kategoride kitap kaydı bulunamadı</h4>
+                <p class="text-xs text-slate-400 mt-1 mb-4">Yeni bir kitap ekleyerek okuma hedefinize hemen başlayabilirsiniz.</p>
+                <button onclick="openAddBookModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow-md">
+                    + Kitap Ekle
+                </button>
+            </div>
+            `;
+        } else {
+            html += `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">`;
+            filteredBooks.forEach(b => {
+                const stars = '⭐️'.repeat(b.rating_stars || 5);
+                const percent = b.percentage || 0;
+                const isCompleted = b.status === 'COMPLETED';
+                const isToRead = b.status === 'TO_READ';
+
+                let statusBadge = '';
+                if (isCompleted) {
+                    statusBadge = `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Tamamlandı ✓</span>`;
+                } else if (isToRead) {
+                    statusBadge = `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">📌 Okunacak</span>`;
+                } else {
+                    statusBadge = `<span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">📖 Okunuyor</span>`;
+                }
+
+                const startDateFormatted = b.start_date ? new Date(b.start_date).toLocaleDateString('tr-TR') : 'Belirtilmedi';
+                const lastReadFormatted = b.last_read_date ? new Date(b.last_read_date).toLocaleDateString('tr-TR') : '-';
+
+                html += `
+                <div data-book-card="${b.id}" class="glass-card p-5 rounded-2xl border border-slate-800 bg-slate-900/60 flex flex-col justify-between hover:border-slate-700 transition shadow-md">
+                    <div>
+                        <!-- Header -->
+                        <div class="flex justify-between items-start gap-2 mb-2">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-1">
+                                    ${statusBadge}
+                                    <span class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">${b.genre || 'Genel'}</span>
+                                </div>
+                                <h4 class="font-bold text-sm text-white line-clamp-1" title="${escapeHtml(b.title)}">${escapeHtml(b.title)}</h4>
+                                <p class="text-xs text-slate-400">${escapeHtml(b.author || 'Yazar Yok')}</p>
+                            </div>
+                            <div class="text-amber-400 text-xs">${stars}</div>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div class="my-3">
+                            <div class="flex justify-between text-xs text-slate-400 mb-1">
+                                <span>Mevcut: <strong class="text-white">${b.read_pages}</strong> / ${b.total_pages} sayfa</span>
+                                <span class="font-bold ${percent === 100 ? 'text-emerald-400' : 'text-indigo-400'}">%${percent}</span>
+                            </div>
+                            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all duration-300 ${percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-indigo-500 to-indigo-400'}" style="width: ${percent}%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Dates Info -->
+                        <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-400 bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/80 mb-3">
+                            <div>
+                                <span class="text-slate-500 block text-[10px]">Başlangıç:</span>
+                                <span class="font-medium text-slate-300">${startDateFormatted}</span>
+                            </div>
+                            <div>
+                                <span class="text-slate-500 block text-[10px]">Son Okuma:</span>
+                                <span class="font-medium text-slate-300">${lastReadFormatted}</span>
+                            </div>
+                        </div>
+
+                        <!-- Coach Feedback Note if any -->
+                        ${b.coach_feedback ? `
+                        <div class="bg-indigo-950/40 border border-indigo-800/40 p-2.5 rounded-xl mb-3">
+                            <p class="text-[11px] text-indigo-300 flex items-start gap-1.5">
+                                <i data-lucide="message-square" class="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5"></i>
+                                <span><strong>Koç Notu:</strong> ${escapeHtml(b.coach_feedback)}</span>
+                            </p>
+                        </div>
+                        ` : ''}
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="pt-3 border-t border-slate-800/80 space-y-2">
+                        <!-- Quick Add Pages & Main Reading Action Button -->
+                        ${!isCompleted ? `
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="quickAddBookPages(${b.id}, 10, ${b.read_pages}, ${b.total_pages})" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-2.5 py-2 rounded-xl border border-slate-700 transition" title="10 sayfa ilerlet">+10 Sayfa</button>
+                            <button onclick="quickAddBookPages(${b.id}, 25, ${b.read_pages}, ${b.total_pages})" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-2.5 py-2 rounded-xl border border-slate-700 transition" title="25 sayfa ilerlet">+25 Sayfa</button>
+                            <button onclick="startLiveReadingSession(${b.id}, '${escapeHtml(b.title)}', ${b.read_pages}, ${b.total_pages})" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 rounded-xl transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20">
+                                <i data-lucide="play" class="w-3.5 h-3.5"></i> ${b.read_pages === 0 || isToRead ? 'Okumaya Başla' : 'Okumaya Devam Et'}
+                            </button>
+                        </div>
+                        ` : `
+                        <div class="bg-emerald-950/30 border border-emerald-800/40 py-2 px-3 rounded-xl text-center text-xs font-bold text-emerald-400 flex items-center justify-center gap-1.5">
+                            <i data-lucide="check" class="w-4 h-4"></i> Tamamlandı ✓
+                        </div>
+                        `}
+
+                        <!-- Secondary Actions -->
+                        <div class="flex items-center justify-between gap-1 text-[11px] pt-1">
+                            <button onclick="openReadingSessionModal(${b.id}, '${escapeHtml(b.title)}', ${b.read_pages}, ${b.total_pages})" class="text-slate-400 hover:text-white flex items-center gap-1">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Seans Gir
+                            </button>
+                            <button onclick="openEditBookModal(${b.id}, '${escapeHtml(b.title)}', '${escapeHtml(b.author || '')}', ${b.total_pages}, ${b.read_pages}, ${b.rating_stars || 5}, '${escapeHtml(b.genre || 'Genel')}', '${b.status}', '${escapeHtml(b.coach_feedback || '')}')" class="text-slate-400 hover:text-white flex items-center gap-1">
+                                <i data-lucide="edit-2" class="w-3.5 h-3.5"></i> Düzenle
+                            </button>
+                            ${currentUser && currentUser.role !== 'STUDENT' ? `
+                            <button onclick="openCoachBookFeedbackModal(${b.id}, '${escapeHtml(b.title)}', '${escapeHtml(b.coach_feedback || '')}')" class="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium">
+                                <i data-lucide="message-square" class="w-3.5 h-3.5"></i> Not Yaz
+                            </button>
+                            ` : ''}
+                            <button onclick="deleteBookRecord(${b.id}, '${escapeHtml(b.title)}')" class="text-rose-500 hover:text-rose-400 p-1" title="Sil">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
                 `;
             });
+            html += `</div>`;
         }
-
-        html += `</div></div>`;
-        document.getElementById('viewContainer').innerHTML = html;
-        if (window.lucide) lucide.createIcons();
-    } catch (err) {
-        console.error("renderBooksView error:", err);
     }
+
+    container.innerHTML = html;
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
 }
 
 // ----------------------------------------------------
@@ -3201,6 +4028,36 @@ let currentReportsCustomStart = '';
 let currentReportsCustomEnd = '';
 let reportsChartInstance = null;
 let reportsSubjectChartInstance = null;
+
+function setReportsTab(tab) {
+    currentReportsTab = tab;
+    renderReportsView();
+}
+window.setReportsTab = setReportsTab;
+
+function setReportsPreset(preset) {
+    currentReportsPreset = preset;
+    renderReportsView();
+}
+window.setReportsPreset = setReportsPreset;
+
+function setReportsSelectedSubject(subId) {
+    currentReportsSelectedSubject = subId;
+    renderReportsView();
+}
+window.setReportsSelectedSubject = setReportsSelectedSubject;
+
+function applyCustomDateFilter() {
+    const sInput = document.getElementById('customStartDate');
+    const eInput = document.getElementById('customEndDate');
+    if (sInput && eInput && sInput.value && eInput.value) {
+        currentReportsPreset = 'CUSTOM';
+        currentReportsCustomStart = sInput.value;
+        currentReportsCustomEnd = eInput.value;
+        renderReportsView();
+    }
+}
+window.applyCustomDateFilter = applyCustomDateFilter;
 
 async function renderReportsView() {
     document.getElementById('pageTitle').textContent = "📈 Akademik Raporlama & Ders Bazlı Gelişim Motoru";
@@ -3255,7 +4112,7 @@ async function renderReportsView() {
                         </span>
                     </div>
                     <p class="text-xs text-slate-400 mt-1">
-                        Son Deneme: <strong class="text-white font-bold">${student.last_exam_net ? student.last_exam_net.toFixed(2) : '0.00'} Net</strong> (${student.last_exam_date || 'Tarih Yok'}) | Ortalama: <strong class="text-indigo-300 font-bold">${summary.average_net.toFixed(2)} Net</strong>
+                        Son Deneme: <strong class="text-white font-bold">${fmtNum(student.last_exam_net)} Net</strong> (${student.last_exam_date || 'Tarih Yok'}) | Ortalama: <strong class="text-indigo-300 font-bold">${fmtNum(summary.average_net)} Net</strong>
                     </p>
                 </div>
             </div>
@@ -3331,49 +4188,30 @@ async function renderReportsView() {
             html += renderReportsAICoachTabHtml(data);
         }
 
-        container.innerHTML = html;
-        if (window.lucide) lucide.createIcons();
-
-        if (currentReportsTab === 'OVERVIEW') {
-            initOverallNetTrendChart(data.total_net_series || []);
-        } else if (currentReportsTab === 'SUBJECTS') {
-            initSubjectTrendChart(subjectAnalytics);
+        if (container) {
+            container.innerHTML = html;
+            if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+            
+            if (currentReportsTab === 'OVERVIEW') {
+                renderReportsOverallChart(data);
+            } else if (currentReportsTab === 'SUBJECTS') {
+                renderReportsSingleSubjectChart(data);
+            }
         }
-
     } catch (err) {
-        console.error("renderReportsView error:", err);
-        container.innerHTML = `<div class="p-8 text-center text-rose-400 font-bold glass-card border border-rose-900/60">Raporlar yüklenirken hata oluştu: ${err.message}</div>`;
+        console.error("Reports render error:", err);
+        if (container) {
+            container.innerHTML = `
+            <div class="glass-card p-12 text-center border border-rose-800 rounded-2xl flex flex-col items-center justify-center my-6">
+                <div class="text-rose-500 mb-3"><i data-lucide="alert-circle" class="w-8 h-8"></i></div>
+                <h3 class="text-sm font-bold text-white mb-1">Rapor Yükleme Hatası</h3>
+                <p class="text-xs text-slate-400">${err.message || 'Öğrencinin rapor verileri yüklenirken bir sorun oluştu.'}</p>
+                <button onclick="renderReportsView()" class="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded-xl transition">Yeniden Dene</button>
+            </div>
+            `;
+            if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+        }
     }
-}
-
-function setReportsTab(tabName) {
-    currentReportsTab = tabName;
-    renderReportsView();
-}
-
-function setReportsPreset(presetName) {
-    currentReportsPreset = presetName;
-    currentReportsCustomStart = '';
-    currentReportsCustomEnd = '';
-    renderReportsView();
-}
-
-function applyCustomDateFilter() {
-    const s = document.getElementById('customStartDate').value;
-    const e = document.getElementById('customEndDate').value;
-    if (!s || !e) {
-        alert("Lütfen hem Başlangıç hem Bitiş tarihini seçiniz.");
-        return;
-    }
-    currentReportsPreset = 'CUSTOM';
-    currentReportsCustomStart = s;
-    currentReportsCustomEnd = e;
-    renderReportsView();
-}
-
-function setReportsSelectedSubject(subId) {
-    currentReportsSelectedSubject = subId;
-    renderReportsView();
 }
 
 function renderReportsOverviewTabHtml(data) {
@@ -3385,31 +4223,31 @@ function renderReportsOverviewTabHtml(data) {
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
         <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 rounded-2xl flex flex-col justify-between">
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">İLK NET</span>
-            <span class="text-2xl font-black text-slate-300 mt-1">${s.first_net ? s.first_net.toFixed(2) : '0.00'}</span>
+            <span class="text-2xl font-black text-slate-300 mt-1">${fmtNum(s.first_net)}</span>
         </div>
         <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 rounded-2xl flex flex-col justify-between">
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">SON NET</span>
-            <span class="text-2xl font-black text-white mt-1">${s.last_net ? s.last_net.toFixed(2) : '0.00'}</span>
+            <span class="text-2xl font-black text-white mt-1">${fmtNum(s.last_net)}</span>
         </div>
         <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 rounded-2xl flex flex-col justify-between">
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">TOPLAM DEĞİŞİM</span>
             <span class="text-2xl font-black ${s.net_change >= 0 ? 'text-emerald-400' : 'text-rose-400'} mt-1">
-                ${s.net_change >= 0 ? '+' : ''}${s.net_change ? s.net_change.toFixed(2) : '0.00'}
+                ${s.net_change >= 0 ? '+' : ''}${fmtNum(s.net_change)}
             </span>
         </div>
         <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 rounded-2xl flex flex-col justify-between">
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">ORTALAMA NET</span>
-            <span class="text-2xl font-black text-indigo-300 mt-1">${s.average_net ? s.average_net.toFixed(2) : '0.00'}</span>
+            <span class="text-2xl font-black text-indigo-300 mt-1">${fmtNum(s.average_net)}</span>
         </div>
         <div class="glass-card p-4 border border-slate-800 bg-slate-900/80 rounded-2xl flex flex-col justify-between">
             <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">EN YÜKSEK NET</span>
-            <span class="text-2xl font-black text-emerald-400 mt-1">${s.highest_net ? s.highest_net.toFixed(2) : '0.00'}</span>
+            <span class="text-2xl font-black text-emerald-400 mt-1">${fmtNum(s.highest_net)}</span>
         </div>
     </div>
 
     <div class="glass-card p-6 border border-slate-800 mb-6">
         <h3 class="text-sm font-bold text-white mb-4 flex items-center gap-2">
-            📈 TOPLAM NET GELİŞİM ÇİZGİSİ (${data.filter.preset} Filtresi)
+            📈 TOPLAM NET GELİŞİM ÇİZGİSİ (${data.filter ? data.filter.preset : '3 AY'} Filtresi)
         </h3>
         <div class="h-64 relative">
             <canvas id="reportsOverallChart"></canvas>
@@ -3465,7 +4303,7 @@ function renderReportsSubjectsTabHtml(data) {
         </button>
         ${subjects.map(s => `
         <button onclick="setReportsSelectedSubject(${s.subject_id})" class="px-3.5 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentReportsSelectedSubject == s.subject_id ? 'bg-indigo-600 text-white shadow' : 'bg-slate-950 text-slate-400 hover:text-white'}">
-            ${s.subject_name} (${s.last_net.toFixed(1)})
+            ${s.subject_name} (${fmtNum(s.last_net, 1)})
         </button>
         `).join('')}
     </div>
@@ -3500,15 +4338,15 @@ function renderReportsSubjectsTabHtml(data) {
                             return `
                             <tr class="hover:bg-slate-800/40 transition cursor-pointer" onclick="setReportsSelectedSubject(${s.subject_id})">
                                 <td class="py-3 px-3 font-bold text-white">${s.subject_name}</td>
-                                <td class="py-3 px-3 text-center text-slate-400">${s.first_net.toFixed(2)}</td>
-                                <td class="py-3 px-3 text-center text-white font-bold">${s.last_net.toFixed(2)}</td>
-                                <td class="py-3 px-3 text-center font-black ${s.net_change >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
-                                    ${s.net_change >= 0 ? '+' : ''}${s.net_change.toFixed(2)}
+                                <td class="py-3 px-3 text-center text-slate-400">${fmtNum(s.first_net)}</td>
+                                <td class="py-3 px-3 text-center text-white font-bold">${fmtNum(s.last_net)}</td>
+                                <td class="py-3 px-3 text-center font-black ${(s.net_change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                                    ${(s.net_change || 0) >= 0 ? '+' : ''}${fmtNum(s.net_change)}
                                 </td>
-                                <td class="py-3 px-3 text-center text-indigo-300 font-bold">${s.average_net.toFixed(2)}</td>
-                                <td class="py-3 px-3 text-center text-slate-300">${s.last_3_average.toFixed(2)}</td>
-                                <td class="py-3 px-3 text-center text-slate-300">${s.last_5_average.toFixed(2)}</td>
-                                <td class="py-3 px-3 text-center text-slate-300 text-[11px] font-semibold">${s.volatility === 'STABLE' ? 'Düşük' : (s.volatility === 'MEDIUM' ? 'Orta' : (s.volatility === 'VOLATILE' ? 'Yüksek' : s.volatility))}</td>
+                                <td class="py-3 px-3 text-center text-indigo-300 font-bold">${fmtNum(s.average_net)}</td>
+                                <td class="py-3 px-3 text-center text-slate-300">${fmtNum(s.last_3_average)}</td>
+                                <td class="py-3 px-3 text-center text-slate-300">${fmtNum(s.last_5_average)}</td>
+                                <td class="py-3 px-3 text-center text-slate-300 text-[11px] font-semibold">${s.volatility === 'STABLE' ? 'Düşük' : (s.volatility === 'MEDIUM' ? 'Orta' : (s.volatility === 'VOLATILE' ? 'Yüksek' : (s.volatility || 'Düşük')))}</td>
                                 <td class="py-3 px-3 text-right whitespace-nowrap">
                                     <span class="text-[10px] font-extrabold px-2.5 py-1 rounded-lg border ${badgeColor}">
                                         ${s.trend === 'UP' ? '↗ Yükseliyor' : (s.trend === 'DOWN' ? '↘ Geriliyor' : '→ Stabil')}
@@ -3527,34 +4365,34 @@ function renderReportsSubjectsTabHtml(data) {
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">İLK NET</span>
-                <span class="text-xl font-black text-slate-300 mt-1">${activeSubject.first_net.toFixed(2)}</span>
+                <span class="text-xl font-black text-slate-300 mt-1">${fmtNum(activeSubject.first_net)}</span>
             </div>
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">SON NET</span>
-                <span class="text-xl font-black text-white mt-1">${activeSubject.last_net.toFixed(2)}</span>
+                <span class="text-xl font-black text-white mt-1">${fmtNum(activeSubject.last_net)}</span>
             </div>
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">DEĞİŞİM</span>
-                <span class="text-xl font-black ${activeSubject.net_change >= 0 ? 'text-emerald-400' : 'text-rose-400'} mt-1">
-                    ${activeSubject.net_change >= 0 ? '+' : ''}${activeSubject.net_change.toFixed(2)}
+                <span class="text-xl font-black ${(activeSubject.net_change || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'} mt-1">
+                    ${(activeSubject.net_change || 0) >= 0 ? '+' : ''}${fmtNum(activeSubject.net_change)}
                 </span>
             </div>
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">ORTALAMA NET</span>
-                <span class="text-xl font-black text-indigo-300 mt-1">${activeSubject.average_net.toFixed(2)}</span>
+                <span class="text-xl font-black text-indigo-300 mt-1">${fmtNum(activeSubject.average_net)}</span>
             </div>
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">EN YÜKSEK</span>
-                <span class="text-xl font-black text-emerald-400 mt-1">${activeSubject.highest_net.toFixed(2)}</span>
+                <span class="text-xl font-black text-emerald-400 mt-1">${fmtNum(activeSubject.highest_net)}</span>
             </div>
             <div class="glass-card p-3.5 border border-slate-800 bg-slate-900/80 rounded-2xl">
                 <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">EN DÜŞÜK</span>
-                <span class="text-xl font-black text-rose-400 mt-1">${activeSubject.lowest_net.toFixed(2)}</span>
+                <span class="text-xl font-black text-rose-400 mt-1">${fmtNum(activeSubject.lowest_net)}</span>
             </div>
         </div>
 
         <div class="glass-card p-6 border border-slate-800 mb-6">
-            <h3 class="text-sm font-bold text-white mb-4">📈 ${activeSubject.subject_name} DENEME BAZLI GELİŞİM ÇİZGİSİ</h3>
+            <h3 class="text-sm font-bold text-white mb-4">📈 ${activeSubject.subject_name || 'Ders'} DENEME BAZLI GELİŞİM ÇİZGİSİ</h3>
             <div class="h-64 relative">
                 <canvas id="reportsSingleSubjectChart"></canvas>
             </div>
@@ -3595,7 +4433,7 @@ function renderReportsMonthlyTabHtml(data) {
                     <tr><td colspan="${labels.length + 3}" class="py-8 text-center text-slate-500">Henüz dönemsel veri oluşmadı.</td></tr>
                     ` : ''}
                     ${subjectNames.map(sName => {
-                        const sRow = matrix[sName];
+                        const sRow = matrix[sName] || {};
                         const change = sRow.change || 0.0;
                         return `
                         <tr class="hover:bg-slate-800/40 transition">
@@ -3665,15 +4503,54 @@ function renderReportsAICoachTabHtml(data) {
             <p class="text-[11px] text-slate-400 mt-1">Temel akademik birikim düzeyi.</p>
         </div>
     </div>
-
-    <div class="glass-card p-6 border border-slate-800">
-        <h3 class="text-sm font-bold text-white mb-3">📦 YAPAY ZEKÂ ASİSTANINA İLETİLEN YAPILANDIRILMIŞ DERS BAĞLAMI</h3>
-        <pre class="bg-slate-950 p-4 rounded-xl text-[11px] text-emerald-400 font-mono overflow-x-auto border border-slate-800 max-h-80">${JSON.stringify(subjects, null, 2)}</pre>
-    </div>
     `;
 
     return html;
 }
+
+function renderReportsOverallChart(data) {
+    const series = (data && (data.total_net_series || data.series)) || [];
+    initOverallNetTrendChart(series);
+}
+window.renderReportsOverallChart = renderReportsOverallChart;
+
+function renderReportsSingleSubjectChart(data) {
+    setTimeout(() => {
+        const ctx = document.getElementById('reportsSingleSubjectChart');
+        if (!ctx || !window.Chart) return;
+        if (reportsSubjectChartInstance) reportsSubjectChartInstance.destroy();
+
+        const subjects = (data && data.subject_analytics) || [];
+        const activeSub = subjects.find(s => s.subject_id == currentReportsSelectedSubject) || subjects[0];
+        const series = (activeSub && (activeSub.net_series || activeSub.series)) || [];
+
+        reportsSubjectChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: series.map(s => s.exam_name || s.date),
+                datasets: [{
+                    label: `${(activeSub && activeSub.subject_name) || 'Ders'} Net Gelişimi`,
+                    data: series.map(s => s.net),
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                    fill: true,
+                    tension: 0.35,
+                    borderWidth: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#94a3b8', font: { family: 'Inter', weight: 'bold' } } } },
+                scales: {
+                    x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51, 65, 85, 0.3)' } },
+                    y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51, 65, 85, 0.3)' } }
+                }
+            }
+        });
+    }, 100);
+}
+window.renderReportsSingleSubjectChart = renderReportsSingleSubjectChart;
 
 function initOverallNetTrendChart(series) {
     setTimeout(() => {
@@ -3727,6 +4604,7 @@ let currentReplyToMessage = null;
 let activeMessageSearchQuery = "";
 let adminMessagingTabFilter = 'ALL'; // 'ALL', 'STUDENT', 'COACH'
 let mobileChatViewMode = 'LIST'; // 'LIST', 'THREAD'
+let isSendingMessage = false;
 
 function setAdminMessagingTabFilter(tab) {
     adminMessagingTabFilter = tab;
@@ -3994,6 +4872,7 @@ async function renderMessagesView(targetUserId = null, searchQuery = "") {
         }
 
         contactsData = await contactsRes.json();
+        setClientCache('/mesajlar/contacts', contactsData);
         let rawContacts = contactsData.contacts || contactsData.conversations || [];
 
         // Apply Tab Filter for Admin
@@ -4257,11 +5136,18 @@ function cancelReplyMessage() {
 
 async function sendMessage(e) {
     e.preventDefault();
+    if (isSendingMessage) return;
+
     const token = localStorage.getItem('yks_token');
     const input = document.getElementById('msgContent');
-    const content = input.value.trim();
+    const content = input ? input.value.trim() : '';
 
     if (!content || !currentMessageRecipientId) return;
+
+    const form = e.target;
+    const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    if (submitBtn) submitBtn.disabled = true;
+    isSendingMessage = true;
 
     try {
         await fetch(`${API_BASE}/mesajlar`, {
@@ -4274,9 +5160,14 @@ async function sendMessage(e) {
             })
         });
         currentReplyToMessage = null;
-        renderMessagesView(currentMessageRecipientId);
+        await renderMessagesView(currentMessageRecipientId);
+        const refreshedInput = document.getElementById('msgContent');
+        if (refreshedInput) refreshedInput.focus();
     } catch (err) {
         alert("Mesaj gönderilirken bir hata oluştu!");
+    } finally {
+        isSendingMessage = false;
+        if (submitBtn) submitBtn.disabled = false;
     }
 }
 
@@ -4401,25 +5292,85 @@ function openBroadcastModal() {
 // ----------------------------------------------------
 let initialTimerSeconds = 1500;
 let isStopwatchMode = false;
+window.activeStudyTask = null;
+
+async function completeActiveStudyTask() {
+    if (!window.activeStudyTask) return;
+    const task = window.activeStudyTask;
+    const token = localStorage.getItem('yks_token');
+    try {
+        if (task.assignmentId && String(task.id).startsWith('asg_')) {
+            await fetch(`${API_BASE}/odevler`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ id: task.assignmentId, status: 'COMPLETED' })
+            });
+            invalidateClientCache('/odevler');
+        } else {
+            await fetch(`${API_BASE}/weekly-program/${task.id}/status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ status: 'TAMAMLANDI' })
+            });
+            invalidateClientCache('/weekly-program');
+        }
+        alert("Harika! Çalışma görevi başarıyla tamamlandı.");
+        window.activeStudyTask = null;
+        location.hash = '#/program';
+    } catch (err) {
+        alert("Durum güncellenirken bir hata oluştu: " + err.message);
+    }
+}
+window.completeActiveStudyTask = completeActiveStudyTask;
 
 function renderTimerView() {
-    document.getElementById('pageTitle').textContent = "YKS Çalışma Zamanlayıcısı & Pomodoro";
+    document.getElementById('pageTitle').textContent = "Çalışma Zamanlayıcısı";
     
     const mins = Math.floor(timerSeconds / 60);
     const secs = timerSeconds % 60;
 
     let html = `
-    <div class="max-w-2xl mx-auto space-y-6">
+    <div class="max-w-3xl mx-auto space-y-6">
+        <!-- ACTIVE STUDY TASK BANNER IF COMING FROM WEEKLY PROGRAM -->
+        ${window.activeStudyTask ? `
+        <div id="activeStudyTaskBanner" class="glass-card p-4 border border-indigo-500/60 bg-gradient-to-r from-indigo-950/80 via-slate-900 to-indigo-950/80 rounded-2xl shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div class="flex items-center gap-3 text-left">
+                <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-lg shrink-0 shadow-md shadow-indigo-600/30">
+                    📚
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                            ◉ DEVAM EDEN ÇALIŞMA GÖREVİ
+                        </span>
+                        ${window.activeStudyTask.startTime ? `<span class="text-xs font-bold text-slate-400">⏱ ${escapeHtml(window.activeStudyTask.startTime)} - ${escapeHtml(window.activeStudyTask.endTime || '')}</span>` : ''}
+                    </div>
+                    <h4 class="text-sm font-black text-white mt-1">
+                        ${escapeHtml(window.activeStudyTask.subjectName ? window.activeStudyTask.subjectName + ' — ' : '')}${escapeHtml(window.activeStudyTask.title)}
+                    </h4>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+                <button onclick="completeActiveStudyTask()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer">
+                    <span>✓ Görevi Tamamla</span>
+                </button>
+                <button onclick="location.hash='#/program'" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs border border-slate-700 transition flex items-center gap-1 cursor-pointer">
+                    <span>📅 Programa Dön</span>
+                </button>
+            </div>
+        </div>
+        ` : ''}
+
         <!-- TOP HEADER & MODE SELECTOR -->
-        <div class="glass-card p-6 border border-slate-800 text-center">
-            <div class="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
+        <div class="glass-card p-4 sm:p-6 border border-slate-800 text-center">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-800 pb-4 mb-6 gap-3">
                 <div class="text-left">
                     <h3 class="text-sm font-bold text-white flex items-center gap-2">
                         <i data-lucide="timer" class="w-5 h-5 text-indigo-400"></i> YKS Çalışma Oturumu Zamanlayıcısı
                     </h3>
                     <p class="text-xs text-slate-400">Kendi sürenizi belirleyin, dersinizi seçin ve odaklanarak çalışmaya başlayın</p>
                 </div>
-                <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
+                <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800 shrink-0 self-start sm:self-auto">
                     <button onclick="setTimerMode(false)" class="px-3 py-1.5 rounded-lg text-xs font-bold transition ${!isStopwatchMode ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}">
                         ⏱ Geri Sayım
                     </button>
@@ -4430,9 +5381,9 @@ function renderTimerView() {
             </div>
 
             <!-- DIGITAL DISPLAY -->
-            <div class="bg-slate-950/80 rounded-2xl border border-slate-800 p-8 my-4 relative overflow-hidden shadow-2xl">
+            <div class="bg-slate-950/80 rounded-2xl border border-slate-800 p-5 sm:p-8 my-4 relative overflow-hidden shadow-2xl">
                 <div class="absolute inset-0 bg-gradient-to-r from-indigo-500/5 via-violet-500/10 to-indigo-500/5 pointer-events-none"></div>
-                <div id="timerDisplay" class="text-6xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-indigo-200 to-violet-400 tracking-tight font-mono">
+                <div id="timerDisplay" class="text-5xl sm:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-indigo-200 to-violet-400 tracking-tight font-mono">
                     ${mins.toString().padStart(2, '0')} : ${secs.toString().padStart(2, '0')}
                 </div>
                 <p id="timerStatusLabel" class="text-xs font-semibold text-slate-400 mt-3 uppercase tracking-widest">
@@ -4441,21 +5392,21 @@ function renderTimerView() {
             </div>
 
             <!-- MAIN ACTION BUTTONS -->
-            <div class="flex justify-center gap-3 my-6">
-                <button onclick="startTimer()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-8 py-3.5 rounded-xl shadow-lg transition flex items-center gap-2 transform active:scale-95">
+            <div class="flex flex-wrap justify-center gap-2 sm:gap-3 my-6">
+                <button onclick="startTimer()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs px-5 sm:px-8 py-3 sm:py-3.5 rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 sm:gap-2 transform active:scale-95">
                     <i data-lucide="play" class="w-4 h-4"></i> Başlat
                 </button>
-                <button onclick="pauseTimer()" class="bg-rose-600/90 hover:bg-rose-500 text-white font-bold text-xs px-8 py-3.5 rounded-xl shadow-lg transition flex items-center gap-2 transform active:scale-95 border border-rose-500/50">
+                <button onclick="pauseTimer()" class="bg-rose-600/90 hover:bg-rose-500 text-white font-bold text-xs px-5 sm:px-8 py-3 sm:py-3.5 rounded-xl shadow-lg transition flex items-center justify-center gap-1.5 sm:gap-2 transform active:scale-95 border border-rose-500/50">
                     <i data-lucide="pause" class="w-4 h-4"></i> Durdur
                 </button>
-                <button onclick="resetTimer()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs px-6 py-3.5 rounded-xl transition flex items-center gap-2 border border-slate-700">
+                <button onclick="resetTimer()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs px-4 sm:px-6 py-3 sm:py-3.5 rounded-xl transition flex items-center justify-center gap-1.5 sm:gap-2 border border-slate-700">
                     <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Sıfırla
                 </button>
             </div>
         </div>
 
         <!-- CUSTOM DURATION INPUT FORM & PRESETS -->
-        <div class="glass-card p-6 border border-slate-800">
+        <div class="glass-card p-4 sm:p-6 border border-slate-800">
             <h4 class="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-4 flex items-center gap-2">
                 <i data-lucide="sliders" class="w-4 h-4"></i> Özel Süre Belirleme & Hazır Şablonlar
             </h4>
@@ -4912,12 +5863,6 @@ async function renderKaynakHavuzuView() {
 
     // COACH & STUDENT RESOURCE POOL VIEW
     document.getElementById('pageTitle').textContent = "📚 Kaynak Havuzum & Kütüphane Yönetimi";
-    container.innerHTML = `
-    <div class="glass-card p-12 text-center border border-[#24314A] rounded-2xl flex flex-col items-center justify-center my-6 bg-[#111A2C]">
-        <div class="animate-spin text-[#4F8CFF] mb-3"><i data-lucide="loader-2" class="w-8 h-8"></i></div>
-        <h3 class="text-sm font-bold text-white mb-1">Kaynak Havuzu Yükleniyor...</h3>
-    </div>`;
-    if (window.lucide) lucide.createIcons();
 
     try {
         const params = new URLSearchParams({
@@ -8015,7 +8960,7 @@ function openForgotPasswordModal(e) {
             <form onsubmit="submitForgotPasswordCheck(event)" class="space-y-4">
                 <div>
                     <label class="block text-slate-300 font-bold mb-1.5">Kullanıcı Adı</label>
-                    <input type="text" id="forgotUsernameInput" required placeholder="ör: burak.akcan veya ummu.akcan" class="w-full bg-[#0E1526] border border-[#24314A] rounded-xl px-4 py-3 text-white font-mono font-bold text-sm text-indigo-300 focus:outline-none focus:border-indigo-500">
+                    <input type="text" id="forgotUsernameInput" required placeholder="ör: kullanici.adi" class="w-full bg-[#0E1526] border border-[#24314A] rounded-xl px-4 py-3 text-white font-mono font-bold text-sm text-indigo-300 focus:outline-none focus:border-indigo-500">
                 </div>
 
                 <div class="flex items-center justify-end gap-2 pt-2">
@@ -8162,7 +9107,7 @@ function openAddStudentModal() {
 
             <div>
                 <label class="block text-slate-400 font-bold mb-1">Kullanıcı Adı (Sistemde Benzersiz Olmalıdır) *</label>
-                <input type="text" id="stUsername" required placeholder="ör: burak.akcan veya burak2026" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono font-bold text-indigo-300">
+                <input type="text" id="stUsername" required placeholder="ör: ad.soyad veya ogrenci1" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white font-mono font-bold text-indigo-300">
                 <span class="text-[10px] text-slate-500 block mt-0.5">💡 Öğrenci bu kullanıcı adı ile sisteme giriş yapacaktır.</span>
             </div>
 
@@ -8758,56 +9703,564 @@ async function submitNewDeneme(e) {
     }
 }
 
+// ==========================================
+// KİTAP OKUMA & KÜTÜPHANE YÖNETİMİ MODALLARI & SAYAÇLAR
+// ==========================================
+
 function openAddBookModal() {
     const html = `
-    <h3 class="text-base font-bold text-white mb-1">+ Yeni Kitap Kaydı Ekle</h3>
-    <p class="text-xs text-slate-400 mb-4">Okuduğunuz kitabı ekleyip puan verin</p>
-    <form onsubmit="submitNewBook(event)" class="space-y-3 text-xs">
-        <div>
-            <label class="block text-slate-400 mb-1">Kitap Adı</label>
-            <input type="text" id="bTitle" required placeholder="ör: Suç ve Ceza" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white">
-        </div>
-        <div>
-            <label class="block text-slate-400 mb-1">Yazar</label>
-            <input type="text" id="bAuthor" required placeholder="ör: Dostoyevski" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white">
-        </div>
-        <div class="grid grid-cols-2 gap-3">
+    <div class="p-1">
+        <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <i data-lucide="book-plus" class="w-5 h-5 text-indigo-400"></i> + Yeni Kitap Kaydı Ekle
+        </h3>
+        <p class="text-xs text-slate-400 mb-4">Okumaya başladığınız veya okuma listenize eklemek istediğiniz kitabı tanımlayın.</p>
+        <form onsubmit="submitNewBook(event)" class="space-y-3.5 text-xs">
             <div>
-                <label class="block text-slate-400 mb-1">Toplam Sayfa</label>
-                <input type="number" id="bPages" required value="400" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white">
+                <label class="block text-slate-400 mb-1 font-medium">Kitap Adı *</label>
+                <input type="text" id="bTitle" required placeholder="ör: Suç ve Ceza, Atomik Alışkanlıklar" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
             </div>
-            <div>
-                <label class="block text-slate-400 mb-1">Puan (1-5 Yıldız)</label>
-                <select id="bRating" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white">
-                    <option value="5">⭐️⭐️⭐️⭐️⭐️ (5)</option>
-                    <option value="4">⭐️⭐️⭐️⭐️ (4)</option>
-                    <option value="3">⭐️⭐️⭐️ (3)</option>
-                </select>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Yazar</label>
+                    <input type="text" id="bAuthor" placeholder="ör: Dostoyevski, James Clear" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Kategori / Tür</label>
+                    <select id="bGenre" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                        <option value="Dünya Klasikleri">Dünya Klasikleri</option>
+                        <option value="Türk Edebiyatı">Türk Edebiyatı</option>
+                        <option value="Kişisel Gelişim">Kişisel Gelişim</option>
+                        <option value="Tarih & Felsefe">Tarih & Felsefe</option>
+                        <option value="Bilim & Teknoloji">Bilim & Teknoloji</option>
+                        <option value="Psikoloji">Psikoloji</option>
+                        <option value="Roman & Hikaye">Roman & Hikaye</option>
+                        <option value="Genel" selected>Genel</option>
+                    </select>
+                </div>
             </div>
-        </div>
-        <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl shadow-md transition mt-2">
-            Kitabı Kaydet
-        </button>
-    </form>`;
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Toplam Sayfa *</label>
+                    <input type="number" id="bPages" required min="1" value="300" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Şu Anki Sayfa</label>
+                    <input type="number" id="bReadPages" min="0" value="0" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Durum</label>
+                    <select id="bStatus" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                        <option value="IN_PROGRESS" selected>📖 Okunuyor</option>
+                        <option value="TO_READ">📌 Okunacak</option>
+                        <option value="COMPLETED">🏆 Tamamlandı</option>
+                    </select>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Puan (1-5 Yıldız)</label>
+                    <select id="bRating" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                        <option value="5" selected>⭐️⭐️⭐️⭐️⭐️ (5 Yıldız)</option>
+                        <option value="4">⭐️⭐️⭐️⭐️ (4 Yıldız)</option>
+                        <option value="3">⭐️⭐️⭐️ (3 Yıldız)</option>
+                        <option value="2">⭐️⭐️ (2 Yıldız)</option>
+                        <option value="1">⭐️ (1 Yıldız)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Hedef Bitiş Tarihi</label>
+                    <input type="date" id="bTargetDate" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-indigo-500 outline-none">
+                </div>
+            </div>
+            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-600/30 transition mt-3 flex items-center justify-center gap-1.5">
+                <i data-lucide="check" class="w-4 h-4"></i> Kitabı Kaydet
+            </button>
+        </form>
+    </div>`;
     openModal(html);
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
 }
 
 async function submitNewBook(e) {
     e.preventDefault();
     const token = localStorage.getItem('yks_token');
-    const title = document.getElementById('bTitle').value;
-    const author = document.getElementById('bAuthor').value;
-    const total_pages = document.getElementById('bPages').value;
-    const rating_stars = document.getElementById('bRating').value;
+    const title = document.getElementById('bTitle').value.trim();
+    const author = document.getElementById('bAuthor').value.trim();
+    const genre = document.getElementById('bGenre').value;
+    const total_pages = parseInt(document.getElementById('bPages').value) || 0;
+    const read_pages = parseInt(document.getElementById('bReadPages').value) || 0;
+    const status = document.getElementById('bStatus').value;
+    const rating_stars = parseInt(document.getElementById('bRating').value) || 5;
+    const target_finish_date = document.getElementById('bTargetDate').value || null;
 
-    await fetch(`${API_BASE}/kitaplar`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ student_id: selectedStudentId, title, author, total_pages, read_pages: 50, rating_stars })
-    });
-    closeModal();
-    alert("Kitap listeye eklendi!");
+    const targetStudentId = (currentUser && currentUser.role === 'STUDENT')
+        ? (currentUser.student_id || (currentUser.student_info ? currentUser.student_info.id : 1))
+        : (selectedStudentId || (coachStudentsList && coachStudentsList.length > 0 ? coachStudentsList[0].id : 1));
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ 
+                student_id: targetStudentId, 
+                title, 
+                author, 
+                genre, 
+                total_pages, 
+                read_pages, 
+                status, 
+                rating_stars,
+                target_finish_date
+            })
+        });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Kitap eklenemedi (HTTP ${res.status})`);
+        }
+        invalidateClientCache('/kitaplar');
+        closeModal();
+        renderBooksView();
+    } catch (err) {
+        alert(err.message || "Kitap eklenirken hata oluştu.");
+    }
+}
+
+function openEditBookModal(bookId, title, author, totalPages, readPages, ratingStars, genre, status, coachFeedback) {
+    const html = `
+    <div class="p-1">
+        <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <i data-lucide="edit" class="w-5 h-5 text-indigo-400"></i> Kitabı Düzenle
+        </h3>
+        <p class="text-xs text-slate-400 mb-4">${title}</p>
+        <form onsubmit="submitEditBook(event, ${bookId})" class="space-y-3.5 text-xs">
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Kitap Adı *</label>
+                <input type="text" id="editBTitle" required value="${escapeHtml(title)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Yazar</label>
+                    <input type="text" id="editBAuthor" value="${escapeHtml(author)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Tür</label>
+                    <input type="text" id="editBGenre" value="${escapeHtml(genre || 'Genel')}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Toplam Sayfa</label>
+                    <input type="number" id="editBPages" required min="1" value="${totalPages}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Okunan Sayfa</label>
+                    <input type="number" id="editBReadPages" min="0" value="${readPages}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Durum</label>
+                    <select id="editBStatus" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                        <option value="IN_PROGRESS" ${status === 'IN_PROGRESS' ? 'selected' : ''}>📖 Okunuyor</option>
+                        <option value="TO_READ" ${status === 'TO_READ' ? 'selected' : ''}>📌 Okunacak</option>
+                        <option value="COMPLETED" ${status === 'COMPLETED' ? 'selected' : ''}>🏆 Tamamlandı</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Puan (1-5 Yıldız)</label>
+                <select id="editBRating" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                    <option value="5" ${ratingStars === 5 ? 'selected' : ''}>⭐️⭐️⭐️⭐️⭐️ (5 Yıldız)</option>
+                    <option value="4" ${ratingStars === 4 ? 'selected' : ''}>⭐️⭐️⭐️⭐️ (4 Yıldız)</option>
+                    <option value="3" ${ratingStars === 3 ? 'selected' : ''}>⭐️⭐️⭐️ (3 Yıldız)</option>
+                    <option value="2" ${ratingStars === 2 ? 'selected' : ''}>⭐️⭐️ (2 Yıldız)</option>
+                    <option value="1" ${ratingStars === 1 ? 'selected' : ''}>⭐️ (1 Yıldız)</option>
+                </select>
+            </div>
+            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-600/30 transition mt-3 flex items-center justify-center gap-1.5">
+                <i data-lucide="save" class="w-4 h-4"></i> Değişiklikleri Kaydet
+            </button>
+        </form>
+    </div>`;
+    openModal(html);
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+}
+
+async function submitEditBook(e, bookId) {
+    e.preventDefault();
+    const token = localStorage.getItem('yks_token');
+    const title = document.getElementById('editBTitle').value.trim();
+    const author = document.getElementById('editBAuthor').value.trim();
+    const genre = document.getElementById('editBGenre').value.trim();
+    const total_pages = parseInt(document.getElementById('editBPages').value) || 0;
+    const read_pages = parseInt(document.getElementById('editBReadPages').value) || 0;
+    const status = document.getElementById('editBStatus').value;
+    const rating_stars = parseInt(document.getElementById('editBRating').value) || 5;
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/${bookId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ title, author, genre, total_pages, read_pages, status, rating_stars })
+        });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Kitap güncellenemedi (HTTP ${res.status})`);
+        }
+        invalidateClientCache('/kitaplar');
+        closeModal();
+        renderBooksView();
+    } catch (err) {
+        alert(err.message || "Kitap güncellenirken hata oluştu.");
+    }
+}
+
+function openReadingSessionModal(bookId, title, currentReadPages, totalPages) {
+    const html = `
+    <div class="p-1">
+        <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <i data-lucide="bookmark-plus" class="w-5 h-5 text-emerald-400"></i> Okuma Seansı Kaydet
+        </h3>
+        <p class="text-xs text-slate-400 mb-4">${title}</p>
+        <form onsubmit="submitReadingSession(event, ${bookId})" class="space-y-3.5 text-xs">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Başlangıç Sayfası</label>
+                    <input type="number" id="sStartPage" required value="${currentReadPages}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Bitiş Sayfası (Kaldığın Yer)</label>
+                    <input type="number" id="sEndPage" required min="${currentReadPages}" max="${totalPages || 9999}" value="${Math.min(totalPages || 9999, currentReadPages + 20)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Okuma Süresi (Dakika)</label>
+                <input type="number" id="sDuration" required min="1" value="25" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Notlar & Alıntılar (İsteğe Bağlı)</label>
+                <textarea id="sNotes" rows="2" placeholder="ör: Bölüm 3'teki ana tema üzerine düşünüldü..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-indigo-500 outline-none resize-none"></textarea>
+            </div>
+            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-600/30 transition mt-3 flex items-center justify-center gap-1.5">
+                <i data-lucide="check" class="w-4 h-4"></i> Seansı Kaydet
+            </button>
+        </form>
+    </div>`;
+    openModal(html);
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+}
+
+async function submitReadingSession(e, bookId) {
+    e.preventDefault();
+    const token = localStorage.getItem('yks_token');
+    const start_page = parseInt(document.getElementById('sStartPage').value) || 0;
+    const end_page = parseInt(document.getElementById('sEndPage').value) || 0;
+    const duration_minutes = parseInt(document.getElementById('sDuration').value) || 0;
+    const notes = document.getElementById('sNotes').value.trim();
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/${bookId}/log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ start_page, end_page, duration_minutes, notes })
+        });
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Seans kaydedilemedi (HTTP ${res.status})`);
+        }
+        invalidateClientCache('/kitaplar');
+        closeModal();
+        renderBooksView();
+    } catch (err) {
+        alert(err.message || "Seans kaydedilirken hata oluştu.");
+    }
+}
+
+async function quickAddBookPages(bookId, deltaPages, currentPages, totalPages) {
+    const token = localStorage.getItem('yks_token');
+
+    const cur = parseInt(currentPages) || 0;
+    const tot = parseInt(totalPages) || 0;
+    let target = cur + deltaPages;
+    if (tot > 0 && target > tot) {
+        target = tot;
+    }
+    const deltaActual = target - cur;
+    if (deltaActual <= 0) {
+        alert("Bu kitap zaten toplam sayfasına ulaşmış veya tamamlanmış!");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/${bookId}/log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ 
+                start_page: cur,
+                end_page: target,
+                pages_read: deltaActual, 
+                duration_minutes: Math.max(1, Math.round(deltaActual * 1.5)), 
+                notes: `Hızlı +${deltaActual} sayfa ilerleme` 
+            })
+        });
+        if (!res.ok) throw new Error("İlerleme kaydedilemedi");
+        invalidateClientCache('/kitaplar');
+        renderBooksView();
+    } catch (err) {
+        alert("Sayfa kaydedilirken hata oluştu.");
+    }
+}
+
+async function deleteBookRecord(bookId, bookTitle) {
+    if (!confirm(`"${bookTitle}" kitabını kütüphanenizden silmek istediğinize emin misiniz?`)) return;
+    const token = localStorage.getItem('yks_token');
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/${bookId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error("Kitap silinemedi");
+        invalidateClientCache('/kitaplar');
+        renderBooksView();
+    } catch (err) {
+        alert("Kitap silinirken hata oluştu.");
+    }
+}
+
+function openReadingGoalsModal(targetBooks, targetPages) {
+    const html = `
+    <div class="p-1">
+        <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <i data-lucide="target" class="w-5 h-5 text-emerald-400"></i> Aylık Okuma Hedefini Belirle
+        </h3>
+        <p class="text-xs text-slate-400 mb-4">Bu ay tamamlamak istediğiniz sayfa ve kitap hedefini girin.</p>
+        <form onsubmit="submitReadingGoals(event)" class="space-y-3.5 text-xs">
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Hedef Kitap Sayısı (Bu Ay)</label>
+                <input type="number" id="gBooks" required min="1" max="20" value="${targetBooks || 2}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Hedef Okunacak Sayfa Sayısı (Bu Ay)</label>
+                <input type="number" id="gPages" required min="50" max="10000" value="${targetPages || 400}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+            </div>
+            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-600/30 transition mt-3 flex items-center justify-center gap-1.5">
+                <i data-lucide="check" class="w-4 h-4"></i> Hedefi Kaydet
+            </button>
+        </form>
+    </div>`;
+    openModal(html);
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+}
+
+async function submitReadingGoals(e) {
+    e.preventDefault();
+    const token = localStorage.getItem('yks_token');
+    const target_books_count = parseInt(document.getElementById('gBooks').value) || 2;
+    const target_pages_monthly = parseInt(document.getElementById('gPages').value) || 400;
+
+    const targetStudentId = (currentUser && currentUser.role === 'STUDENT')
+        ? (currentUser.student_id || (currentUser.student_info ? currentUser.student_info.id : 1))
+        : (selectedStudentId || 1);
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/goals`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ student_id: targetStudentId, target_books_count, target_pages_monthly })
+        });
+        if (!res.ok) throw new Error("Hedef kaydedilemedi");
+        invalidateClientCache('/kitaplar');
+        closeModal();
+        renderBooksView();
+    } catch (err) {
+        alert("Hedef kaydedilirken hata oluştu.");
+    }
+}
+
+function openCoachBookFeedbackModal(bookId, bookTitle, existingFeedback) {
+    const html = `
+    <div class="p-1">
+        <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <i data-lucide="message-square" class="w-5 h-5 text-indigo-400"></i> Koç Geri Bildirimi Ekle
+        </h3>
+        <p class="text-xs text-slate-400 mb-4">${bookTitle}</p>
+        <form onsubmit="submitCoachBookFeedback(event, ${bookId})" class="space-y-3.5 text-xs">
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Öğrenciye Özel Okuma Tavsiyesi & Notu</label>
+                <textarea id="coachFbText" required rows="3" placeholder="ör: Bu kitabı bu hafta bitirmeye çalış. Özellikle 4. bölümün sonunda not çıkar." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-indigo-500 outline-none resize-none">${escapeHtml(existingFeedback || '')}</textarea>
+            </div>
+            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-600/30 transition mt-3 flex items-center justify-center gap-1.5">
+                <i data-lucide="send" class="w-4 h-4"></i> Notu Kaydet
+            </button>
+        </form>
+    </div>`;
+    openModal(html);
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+}
+
+async function submitCoachBookFeedback(e, bookId) {
+    e.preventDefault();
+    const token = localStorage.getItem('yks_token');
+    const feedback = document.getElementById('coachFbText').value.trim();
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/${bookId}/coach-feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ feedback })
+        });
+        if (!res.ok) throw new Error("Geri bildirim kaydedilemedi");
+        invalidateClientCache('/kitaplar');
+        closeModal();
+        renderBooksView();
+    } catch (err) {
+        alert("Geri bildirim kaydedilirken hata oluştu.");
+    }
+}
+
+// ----------------------------------------------------
+// CANLI OKUMA SAYAÇ MOTORU (LIVE READING TIMER)
+// ----------------------------------------------------
+function startLiveReadingSession(bookId, bookTitle, currentReadPages, totalPages = 0) {
+    if (activeReadingTimerState.isActive) {
+        if (!confirm("Şu an devam eden bir okuma oturumunuz var. Yeni bir oturum başlatmak istiyor musunuz?")) return;
+        clearInterval(activeReadingTimerState.interval);
+    }
+
+    const startTime = new Date();
+    activeReadingTimerState = {
+        isActive: true,
+        bookId: bookId,
+        bookTitle: bookTitle,
+        startPage: parseInt(currentReadPages) || 0,
+        totalPages: parseInt(totalPages) || 0,
+        startTime: startTime,
+        secondsElapsed: 0,
+        isPaused: false,
+        interval: setInterval(() => {
+            if (!activeReadingTimerState.isPaused) {
+                activeReadingTimerState.secondsElapsed++;
+                const m = Math.floor(activeReadingTimerState.secondsElapsed / 60);
+                const s = activeReadingTimerState.secondsElapsed % 60;
+                const clockEl = document.getElementById('liveReadingTimerClock');
+                if (clockEl) {
+                    clockEl.textContent = `⏱ ${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                }
+                const estPagesEl = document.getElementById('liveReadingPagesEst');
+                const estSpeedEl = document.getElementById('liveReadingSpeedEst');
+                const estPages = Math.max(1, Math.floor(activeReadingTimerState.secondsElapsed / 75));
+                const estSpeed = activeReadingTimerState.secondsElapsed > 30 
+                    ? Math.round((estPages / (activeReadingTimerState.secondsElapsed / 3600)))
+                    : 45;
+                if (estPagesEl) estPagesEl.innerHTML = `<i data-lucide="book-open" class="w-3.5 h-3.5 text-indigo-400"></i> ~${estPages} sf`;
+                if (estSpeedEl) estSpeedEl.innerHTML = `<i data-lucide="zap" class="w-3.5 h-3.5 text-amber-400"></i> ${estSpeed} sf/saat`;
+            }
+        }, 1000)
+    };
+
     renderBooksView();
+}
+
+function togglePauseReadingTimer() {
+    if (!activeReadingTimerState.isActive) return;
+    activeReadingTimerState.isPaused = !activeReadingTimerState.isPaused;
+    renderBooksView();
+}
+
+function updateFinishSessionCalc(startP, durationMins) {
+    const endInput = document.getElementById('finishEndPage');
+    const calcText = document.getElementById('finishCalcSummary');
+    if (!endInput || !calcText) return;
+    const endP = parseInt(endInput.value) || startP;
+    const pages = Math.max(0, endP - startP);
+    const speed = durationMins > 0 ? Math.round(pages / (durationMins / 60)) : 0;
+    calcText.innerHTML = `Okunan: <strong class="text-emerald-400">${pages} sayfa</strong> • Hız: <strong class="text-indigo-400">${speed} sayfa/saat</strong>`;
+}
+
+function finishActiveReadingTimer() {
+    if (!activeReadingTimerState.isActive) return;
+    clearInterval(activeReadingTimerState.interval);
+    const durationMinutes = Math.max(1, Math.round(activeReadingTimerState.secondsElapsed / 60));
+    const startP = activeReadingTimerState.startPage;
+    const totalP = activeReadingTimerState.totalPages;
+    const bId = activeReadingTimerState.bookId;
+    const bTitle = activeReadingTimerState.bookTitle;
+    const sTime = activeReadingTimerState.startTime ? activeReadingTimerState.startTime.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : 'Başlangıç';
+    const eTime = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+    activeReadingTimerState.isActive = false;
+
+    const defaultEndP = totalP > 0 ? Math.min(totalP, startP + 15) : startP + 15;
+    const defaultPages = Math.max(0, defaultEndP - startP);
+    const defaultSpeed = durationMinutes > 0 ? Math.round(defaultPages / (durationMinutes / 60)) : 0;
+
+    // Open finish dialog to enter final page
+    const html = `
+    <div class="p-1">
+        <h3 class="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i> Okuma Oturumunu Tamamla
+        </h3>
+        <p class="text-xs text-slate-400 mb-4">${bTitle}</p>
+        
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-xs mb-3 space-y-1.5">
+            <div class="flex justify-between text-slate-400">
+                <span>Zaman Aralığı:</span>
+                <span class="font-bold text-white">${sTime} - ${eTime}</span>
+            </div>
+            <div class="flex justify-between text-slate-400">
+                <span>Toplam Süre:</span>
+                <span class="font-bold text-amber-400">${durationMinutes} dakika</span>
+            </div>
+            <div class="flex justify-between pt-1 border-t border-slate-800/80 text-[11px]" id="finishCalcSummary">
+                Okunan: <strong class="text-emerald-400">${defaultPages} sayfa</strong> • Hız: <strong class="text-indigo-400">${defaultSpeed} sayfa/saat</strong>
+            </div>
+        </div>
+
+        <form onsubmit="submitFinishActiveReadingTimer(event, ${bId}, ${startP}, ${totalP}, ${durationMinutes})" class="space-y-3 text-xs">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Başlangıç Sayfası</label>
+                    <input type="number" id="finishStartPage" disabled value="${startP}" class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-slate-400">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1 font-medium">Ulaşılan Bitiş Sayfası *</label>
+                    <input type="number" id="finishEndPage" required min="${startP}" ${totalP > 0 ? `max="${totalP}"` : ''} value="${defaultEndP}" oninput="updateFinishSessionCalc(${startP}, ${durationMinutes})" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:border-indigo-500 outline-none">
+                </div>
+            </div>
+            <div>
+                <label class="block text-slate-400 mb-1 font-medium">Seans Notu / Düşünceler (Opsiyonel)</label>
+                <textarea id="finishNotes" rows="2" placeholder="ör: Bugün akıcı geçti, yeni kelimeler ve ana fikirler not edildi..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:border-indigo-500 outline-none resize-none"></textarea>
+            </div>
+            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-emerald-600/30 transition mt-2 flex items-center justify-center gap-1.5">
+                <i data-lucide="save" class="w-4 h-4"></i> Oturumu Kaydet
+            </button>
+        </form>
+    </div>`;
+    openModal(html);
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+}
+
+async function submitFinishActiveReadingTimer(e, bookId, startPage, totalPages, durationMinutes) {
+    e.preventDefault();
+    const token = localStorage.getItem('yks_token');
+    let end_page = parseInt(document.getElementById('finishEndPage').value) || startPage;
+    if (totalPages > 0 && end_page > totalPages) {
+        end_page = totalPages;
+    }
+    const notes = document.getElementById('finishNotes').value.trim();
+
+    try {
+        const res = await fetch(`${API_BASE}/kitaplar/${bookId}/log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ start_page: startPage, end_page, duration_minutes: durationMinutes, notes })
+        });
+        if (!res.ok) throw new Error("Oturum kaydedilemedi");
+        invalidateClientCache('/kitaplar');
+        closeModal();
+        renderBooksView();
+    } catch (err) {
+        alert("Oturum kaydedilirken hata oluştu.");
+    }
 }
 
 let activeStudentRiskFilter = 'ALL';
@@ -8817,16 +10270,9 @@ async function renderStudentsRiskListView(filter = 'ALL') {
     activeStudentRiskFilter = filter;
     const container = document.getElementById('viewContainer');
 
-    // 1. STATE: LOADING
-    if (container) {
-        container.innerHTML = `
-        <div class="glass-card p-12 text-center border border-[#24314A] rounded-2xl flex flex-col items-center justify-center my-6 bg-[#111A2C]">
-            <div class="animate-spin text-[#4F8CFF] mb-3"><i data-lucide="loader-2" class="w-8 h-8"></i></div>
-            <h3 class="text-sm font-bold text-white mb-1">Öğrenci Listesi Yükleniyor...</h3>
-            <p class="text-xs text-[#A8B3C7]">Lütfen bekleyin, koçluğunuza bağlı öğrencilerin akademik risk durumları getiriliyor.</p>
-        </div>
-        `;
-        if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+    // 1. STATE: LOADING (Only when uncached)
+    if (container && (!coachStudentsCache || coachStudentsCache.length === 0)) {
+        renderViewSkeleton('students', container);
     }
 
     try {
@@ -9086,7 +10532,9 @@ async function handleProgramDrop(e, targetDate, targetDay, targetStartTime, targ
 }
 
 async function renderWeeklyProgramView(studentId = null) {
-    document.getElementById('pageTitle').textContent = "Haftalık Çalışma & Ders Programı";
+    const user = getCurrentUser();
+    const isStudentRole = user && user.role === 'STUDENT';
+    document.getElementById('pageTitle').textContent = isStudentRole ? "Haftalık Programım" : "Haftalık Çalışma & Ders Programı";
     const token = localStorage.getItem('yks_token');
     const container = document.getElementById('viewContainer');
 
@@ -9101,8 +10549,8 @@ async function renderWeeklyProgramView(studentId = null) {
     if (studentId && !isNaN(parseInt(studentId))) {
         weeklyActiveStudentId = parseInt(studentId);
         localStorage.setItem('yks_selected_student_id', weeklyActiveStudentId);
-    } else if (currentUser && currentUser.role === 'STUDENT') {
-        weeklyActiveStudentId = currentUser.student_id || (currentUser.student_info ? currentUser.student_info.id : 1);
+    } else if (isStudentRole) {
+        weeklyActiveStudentId = user.student_id || (user.student_info ? user.student_info.id : 1);
     } else {
         const savedStId = localStorage.getItem('yks_selected_student_id');
         if (savedStId && !isNaN(parseInt(savedStId))) {
@@ -9112,18 +10560,6 @@ async function renderWeeklyProgramView(studentId = null) {
         } else {
             weeklyActiveStudentId = 1;
         }
-    }
-
-    // STATE 1: PROGRAM_LOADING
-    if (container) {
-        container.innerHTML = `
-        <div class="glass-card p-12 text-center border border-slate-800 rounded-2xl flex flex-col items-center justify-center my-6 shadow-xl">
-            <div class="animate-spin text-indigo-500 mb-3"><i data-lucide="loader-2" class="w-8 h-8"></i></div>
-            <h3 class="text-sm font-bold text-white mb-1">Haftalık Program Yükleniyor...</h3>
-            <p class="text-xs text-slate-400">Lütfen bekleyin, seçili öğrencinin çalışma takvimi ve ders planı getiriliyor.</p>
-        </div>
-        `;
-        if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
     }
 
     let is10sTimeout = false;
@@ -9139,74 +10575,93 @@ async function renderWeeklyProgramView(studentId = null) {
     }, 10000);
 
     try {
-        endpoint = `${API_BASE}/weekly-program?student_id=${weeklyActiveStudentId}&week_start=${weeklyCurrentWeekStart}`;
+        const progUrl = `/weekly-program?student_id=${weeklyActiveStudentId}&week_start=${weeklyCurrentWeekStart}`;
+        const cachedProg = getFromClientCache(progUrl, 120000);
 
-        // Parallelize cached students and weekly-program requests
         const isCoachRole = currentUser && currentUser.role !== 'STUDENT';
-        const fetchStudentsPromise = isCoachRole
-            ? getCoachStudents().then(st => ({ students: st }))
-            : Promise.resolve({ students: [] });
+        let dataProg = null;
+        let students = [];
 
-        const fetchProgramPromise = fetch(endpoint, {
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: controller.signal
-        });
+        if (cachedProg && !cachedProg.isStale) {
+            clearTimeout(timeoutId);
+            dataProg = cachedProg.data;
+            if (isCoachRole) {
+                students = await getCoachStudents();
+            }
+        } else {
+            endpoint = `${API_BASE}${progUrl}`;
+            const fetchStudentsPromise = isCoachRole
+                ? getCoachStudents().then(st => ({ students: st }))
+                : Promise.resolve({ students: [] });
 
-        const [dataSt, resProg] = await Promise.all([
-            fetchStudentsPromise,
-            fetchProgramPromise
-        ]);
-        clearTimeout(timeoutId);
+            const fetchProgramPromise = fetch(endpoint, {
+                headers: { 'Authorization': `Bearer ${token}` },
+                signal: controller.signal
+            });
 
-        // Check sequence for race conditions
-        if (currentSeq !== weeklyProgramRequestSeq) {
-            console.warn("[WEEKLY PROGRAM] Discarding outdated request sequence:", currentSeq, "Active:", weeklyProgramRequestSeq);
-            return;
-        }
+            const [dataSt, resProg] = await Promise.all([
+                fetchStudentsPromise,
+                fetchProgramPromise
+            ]);
+            clearTimeout(timeoutId);
 
-        let students = dataSt.students || [];
-        if (students.length > 0 && !students.find(s => s.id == weeklyActiveStudentId)) {
-            weeklyActiveStudentId = students[0].id;
-        }
+            // Check sequence for race conditions
+            if (currentSeq !== weeklyProgramRequestSeq) {
+                console.warn("[WEEKLY PROGRAM] Discarding outdated request sequence:", currentSeq, "Active:", weeklyProgramRequestSeq);
+                return;
+            }
 
-        const contentTypeProg = resProg.headers.get("content-type") || "";
+            students = dataSt.students || [];
+            if (students.length > 0 && !students.find(s => s.id == weeklyActiveStudentId)) {
+                weeklyActiveStudentId = students[0].id;
+            }
 
-        if (!resProg.ok) {
-            let errDetail = `HTTP ${resProg.status}`;
-            if (contentTypeProg.includes("application/json")) {
-                const errJson = await resProg.json();
-                errDetail = errJson.error || errJson.message || errDetail;
-            } else {
-                const rawText = await resProg.text();
-                console.error("[PROGRAM LOAD ERROR - NON-JSON RESPONSE]", {
+            const contentTypeProg = resProg.headers.get("content-type") || "";
+
+            if (!contentTypeProg.includes("application/json")) {
+                console.error("[PROGRAM LOAD ERROR - CONTENT TYPE]", {
                     studentId: weeklyActiveStudentId,
                     weekStart: weeklyCurrentWeekStart,
                     endpoint,
                     status: resProg.status,
-                    contentType: contentTypeProg,
-                    bodySnippet: rawText.substring(0, 300)
+                    contentType: contentTypeProg
                 });
+                throw new Error("Sunucu geçerli JSON verisi döndürmedi.");
             }
-            throw new Error(errDetail);
+
+            if (!resProg.ok) {
+                let errDetail = `HTTP ${resProg.status}`;
+                try {
+                    const errJson = await resProg.json();
+                    errDetail = errJson.error || errJson.message || errDetail;
+                } catch (_) {}
+                throw new Error(errDetail);
+            }
+
+            dataProg = await resProg.json();
+            setClientCache(progUrl, dataProg);
         }
 
-        if (!contentTypeProg.includes("application/json")) {
-            console.error("[PROGRAM LOAD ERROR - CONTENT TYPE]", {
-                studentId: weeklyActiveStudentId,
-                weekStart: weeklyCurrentWeekStart,
-                endpoint,
-                status: resProg.status,
-                contentType: contentTypeProg
-            });
-            throw new Error("Sunucu geçerli JSON verisi döndürmedi.");
-        }
-
-        const dataProg = await resProg.json();
-        const items = dataProg.items || [];
-        const studentInfo = dataProg.student || { id: weeklyActiveStudentId, student_name: 'Öğrenci', track: 'SAYISAL' };
+        const items = (dataProg && dataProg.items) || [];
+        const studentInfo = (dataProg && dataProg.student) || { id: weeklyActiveStudentId, student_name: 'Öğrenci', track: 'SAYISAL' };
 
         weeklyProgramState.student = studentInfo;
         weeklyProgramState.items = items;
+
+        // Fetch active student assignments for coach assignment linking
+        if (currentUser && currentUser.role !== 'STUDENT' && weeklyActiveStudentId) {
+            try {
+                const resAsg = await fetch(`${API_BASE}/odevler?student_id=${weeklyActiveStudentId}&status=ALL`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (resAsg.ok) {
+                    const dataAsg = await resAsg.json();
+                    weeklyProgramState.studentAssignments = (dataAsg && dataAsg.assignments) ? dataAsg.assignments.filter(a => a.status !== 'COMPLETED') : [];
+                }
+            } catch (_) {
+                weeklyProgramState.studentAssignments = [];
+            }
+        }
 
         const weekDates = [];
         const startDateObj = new Date(weeklyCurrentWeekStart);
@@ -9250,7 +10705,8 @@ async function renderWeeklyProgramView(studentId = null) {
             }
         });
 
-        const isStudentRole = currentUser && currentUser.role === 'STUDENT';
+        const activeUser = getCurrentUser();
+        const isStudentRole = activeUser && activeUser.role === 'STUDENT';
 
         // Compute Simple Accurate KPI Statistics
         const totTasks = (items || []).length;
@@ -9258,7 +10714,7 @@ async function renderWeeklyProgramView(studentId = null) {
         const pendTasks = totTasks - compTasks;
         const compRate = totTasks > 0 ? Math.round((compTasks / totTasks) * 100) : 0;
 
-        let html = `
+        const html = `
         <div class="space-y-5 text-xs">
             <!-- TOP BAR CONTROLS -->
             <div class="glass-card p-4 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
@@ -9274,7 +10730,7 @@ async function renderWeeklyProgramView(studentId = null) {
                             </span>
                         </div>
                         <p class="text-[11px] text-slate-400 mt-0.5">
-                            ${!isStudentRole ? 'Hücreye tıklayarak doğrudan görev yazın ve kaydedin.' : 'Haftalık programınızı inceleyin ve tamamladığınız görevleri işaretleyin.'}
+                            ${isStudentRole ? 'Haftalık çalışma planınızı inceleyin ve tamamladığınız görevleri işaretleyin.' : 'Hücreye tıklayarak doğrudan görev yazın ve kaydedin.'}
                         </p>
                     </div>
                 </div>
@@ -9319,8 +10775,8 @@ async function renderWeeklyProgramView(studentId = null) {
                         📋
                     </div>
                     <div>
-                        <h4 class="text-xs font-bold text-white">Bu Öğrenci İçin Henüz Bu Haftaya Ait Program Oluşturulmamış</h4>
-                        <p class="text-[11px] text-slate-300 mt-0.5">Aşağıdaki hücrelere tıklayarak doğrudan yeni ders veya çalışma görevi ekleyebilirsiniz.</p>
+                        <h4 class="text-xs font-bold text-white">${isStudentRole ? 'Bu Haftaya Ait Planlanmış Çalışma Görevi Bulunmuyor' : 'Bu Öğrenci İçin Henüz Bu Haftaya Ait Program Oluşturulmamış'}</h4>
+                        <p class="text-[11px] text-slate-300 mt-0.5">${isStudentRole ? 'Koçunuz haftalık programınızı güncellediğinde dersleriniz burada listelenecektir.' : 'Aşağıdaki hücrelere tıklayarak doğrudan yeni ders veya çalışma görevi ekleyebilirsiniz.'}</p>
                     </div>
                 </div>
                 ${!isStudentRole ? `
@@ -9363,7 +10819,7 @@ async function renderWeeklyProgramView(studentId = null) {
                 </div>
             </div>
 
-            <!-- WEEKLY GRID TABLE (DIRECT IN-CELL EDITING) -->
+            <!-- WEEKLY GRID TABLE (EXCEL STYLE) -->
             <div class="glass-card border border-slate-800 overflow-hidden shadow-2xl relative">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs min-w-[900px]">
@@ -9463,40 +10919,363 @@ async function renderWeeklyProgramView(studentId = null) {
 }
 
 // ----------------------------------------------------
-// EXCEL-STYLE IN-CELL RENDERING & AUTOSAVE CONTROLLER
+// MODERN STUDENT WEEKLY PROGRAM CARDS & LIST RENDERER
 // ----------------------------------------------------
+function renderStudentWeeklyProgramCardsHtml({ studentInfo, weekDates, items, totTasks, compTasks, pendTasks, compRate }) {
+    const rangeText = `${formatDateTR(weekDates[0].date)} – ${formatDateTR(weekDates[6].date)}`;
+
+    return `
+    <div class="space-y-6 text-xs">
+        <!-- TOP BAR -->
+        <div class="glass-card p-4 sm:p-5 border border-[#24314A] bg-[#111A2C] rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
+            <div class="flex items-center gap-3.5">
+                <div class="w-12 h-12 rounded-2xl bg-indigo-600/90 text-white flex items-center justify-center font-black text-xl shadow-lg shadow-indigo-600/30 shrink-0">
+                    📅
+                </div>
+                <div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <h2 class="text-base font-black text-white tracking-tight">HAFTALIK PROGRAMIM</h2>
+                        <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800">
+                            👤 ${escapeHtml(studentInfo.student_name || 'Öğrenci')} ${escapeHtml(studentInfo.student_surname || '')}
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-0.5">
+                        Haftalık çalışma planınızı inceleyin ve tamamladığınız görevleri işaretleyin.
+                    </p>
+                </div>
+            </div>
+
+            <!-- WEEK SWITCHER -->
+            <div class="flex items-center bg-[#0B1324] p-1.5 rounded-2xl border border-[#24314A] shadow-inner self-stretch md:self-auto justify-between md:justify-end gap-1.5 flex-wrap sm:flex-nowrap">
+                <button onclick="shiftWeek(-7)" title="Önceki Hafta" class="px-3 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-[#172238] transition font-bold text-xs flex items-center gap-1 cursor-pointer">
+                    <span>← Önceki Hafta</span>
+                </button>
+                <span class="px-3.5 py-1.5 rounded-xl bg-[#172238]/80 text-white font-extrabold text-xs text-center border border-[#24314A] whitespace-nowrap">
+                    [ ${rangeText} ]
+                </span>
+                <button onclick="shiftWeek(7)" title="Sonraki Hafta" class="px-3 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-[#172238] transition font-bold text-xs flex items-center gap-1 cursor-pointer">
+                    <span>Sonraki Hafta →</span>
+                </button>
+                <button onclick="resetCurrentWeek()" class="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition font-black text-xs shadow cursor-pointer">
+                    BU HAFTA
+                </button>
+            </div>
+        </div>
+
+        <!-- 4 KPI CARDS -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl flex items-center justify-between shadow-lg">
+                <div>
+                    <span class="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Toplam Görev</span>
+                    <span class="text-xl font-black text-indigo-400 mt-0.5 block">${totTasks}</span>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-indigo-950/80 text-indigo-400 border border-indigo-800/80 flex items-center justify-center text-base font-bold shadow-sm">📋</div>
+            </div>
+            <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl flex items-center justify-between shadow-lg">
+                <div>
+                    <span class="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Tamamlanan</span>
+                    <span class="text-xl font-black text-emerald-400 mt-0.5 block">${compTasks}</span>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-emerald-950/80 text-emerald-400 border border-emerald-800/80 flex items-center justify-center text-base font-bold shadow-sm">✓</div>
+            </div>
+            <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl flex items-center justify-between shadow-lg">
+                <div>
+                    <span class="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Bekleyen</span>
+                    <span class="text-xl font-black text-amber-400 mt-0.5 block">${pendTasks}</span>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-amber-950/80 text-amber-400 border border-amber-800/80 flex items-center justify-center text-base font-bold shadow-sm">⏳</div>
+            </div>
+            <div class="glass-card p-4 border border-[#24314A] bg-[#111A2C] rounded-2xl flex items-center justify-between shadow-lg">
+                <div>
+                    <span class="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Tamamlama %</span>
+                    <span class="text-xl font-black text-purple-400 mt-0.5 block">%${compRate}</span>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-purple-950/80 text-purple-400 border border-purple-800/80 flex items-center justify-center text-base font-bold shadow-sm">📊</div>
+            </div>
+        </div>
+
+        <!-- 7 DAYS GRID CARDS (RESPONSIVE: 1 col on mobile, 2 cols on tablet, 3-4 cols on desktop) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            ${weekDates.map(wd => {
+                const dayTasks = (items || []).filter(it => it && it.date === wd.date);
+                dayTasks.sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+                const dayDoneCount = dayTasks.filter(t => t.status === 'TAMAMLANDI' || t.completion_status === 'TAMAMLANDI' || t.status === 'COMPLETED').length;
+
+                return `
+                <div class="glass-card border ${wd.isToday ? 'border-indigo-500/60 ring-1 ring-indigo-500/30' : 'border-[#24314A]'} bg-[#111A2C] rounded-3xl p-4 flex flex-col shadow-xl transition">
+                    <!-- DAY HEADER -->
+                    <div class="flex items-center justify-between pb-3 border-b border-[#24314A] mb-3">
+                        <div>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-black text-white uppercase tracking-wider">${wd.dayName}</span>
+                                ${wd.isToday ? '<span class="text-[9px] bg-indigo-600 text-white font-extrabold px-2 py-0.5 rounded-full shadow">BUGÜN</span>' : ''}
+                            </div>
+                            <span class="text-[11px] text-slate-400 font-medium block mt-0.5">${wd.displayDate}</span>
+                        </div>
+                        <span class="text-[10px] font-bold px-2.5 py-0.5 rounded-full ${dayTasks.length > 0 ? (dayDoneCount === dayTasks.length ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-[#172238] text-slate-300 border border-[#24314A]') : 'bg-slate-900 text-slate-500'}">
+                            ${dayTasks.length > 0 ? `${dayDoneCount}/${dayTasks.length} Görev` : '0 Görev'}
+                        </span>
+                    </div>
+
+                    <!-- DAY TASKS LIST -->
+                    <div class="space-y-3 flex-1">
+                        ${dayTasks.length === 0 ? `
+                        <div class="py-8 text-center text-slate-500 text-xs flex flex-col items-center justify-center">
+                            <span class="text-lg opacity-40 mb-1">☕</span>
+                            <p class="text-[11px]">Henüz planlanmış görev yok.</p>
+                        </div>
+                        ` : dayTasks.map(task => {
+                            const isCompleted = task.status === 'TAMAMLANDI' || task.completion_status === 'TAMAMLANDI' || task.status === 'COMPLETED';
+                            const isInProgress = task.status === 'DEVAM_EDIYOR' || task.completion_status === 'DEVAM_EDIYOR' || task.status === 'IN_PROGRESS';
+                            const isSkipped = task.status === 'ATLANDI' || task.completion_status === 'ATLANDI' || task.status === 'SKIPPED';
+                            
+                            let studyIcon = '📌';
+                            const stType = (task.study_type || '').toLowerCase();
+                            if (stType.includes('konu')) studyIcon = '📚';
+                            else if (stType.includes('soru')) studyIcon = '✏️';
+                            else if (stType.includes('deneme')) studyIcon = '📝';
+                            else if (stType.includes('kitap') || stType.includes('okuma')) studyIcon = '📖';
+
+                            const timeInfo = (task.start_time && task.end_time) ? `${task.start_time} - ${task.end_time}` : (task.start_time || '');
+                            
+                            return `
+                            <div class="p-3.5 rounded-2xl border ${isCompleted ? 'bg-emerald-950/25 border-emerald-800/60 text-slate-200' : isInProgress ? 'bg-amber-950/20 border-amber-800/60 text-white' : 'bg-[#0B1324] border-[#2A3954] text-white hover:border-[#4F8CFF]'} shadow-sm transition space-y-2.5">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                                        <span class="text-sm shrink-0">${studyIcon}</span>
+                                        <span class="text-xs font-bold text-white truncate">${escapeHtml(task.subject_name || task.subject || task.study_type || 'Çalışma')}</span>
+                                    </div>
+                                    ${timeInfo ? `
+                                    <span class="text-[10px] text-slate-400 font-semibold bg-[#172238] px-2 py-0.5 rounded-lg border border-[#24314A] shrink-0">
+                                        ⏱ ${timeInfo}
+                                    </span>
+                                    ` : ''}
+                                </div>
+
+                                <div>
+                                    <h4 class="text-xs font-black ${isCompleted ? 'text-emerald-300 line-through' : 'text-slate-100'} leading-tight">
+                                        ${escapeHtml(task.title || task.topic_name || task.curriculum_topic_title || 'Çalışma Görevi')}
+                                    </h4>
+                                    ${task.topic_name && task.topic_name !== task.title ? `
+                                    <p class="text-[11px] text-slate-400 mt-0.5">${escapeHtml(task.topic_name)}</p>
+                                    ` : ''}
+                                    ${task.resource_title ? `
+                                    <p class="text-[10px] text-indigo-300 mt-1 flex items-center gap-1">
+                                        <span>📖</span> <span>${escapeHtml(task.resource_title)}</span>
+                                    </p>
+                                    ` : ''}
+                                    ${task.description ? `
+                                    <p class="text-[10px] text-slate-400 mt-1 line-clamp-2">${escapeHtml(task.description)}</p>
+                                    ` : ''}
+                                </div>
+
+                                <!-- STATUS & ACTIONS -->
+                                <div class="pt-2 border-t border-[#24314A]/80 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap">
+                                    ${isCompleted ? `
+                                    <span class="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2.5 py-1 rounded-xl">
+                                        ✓ Tamamlandı
+                                    </span>
+                                    <button onclick="setStudentTaskStatus(${task.id}, 'PLANLANDI')" class="text-[10px] text-slate-400 hover:text-slate-200 underline cursor-pointer ml-auto">
+                                        Geri Al
+                                    </button>
+                                    ` : isInProgress ? `
+                                    <span class="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-300 bg-amber-950/80 border border-amber-800/80 px-2.5 py-1 rounded-xl shadow-sm animate-pulse">
+                                        🟡 Çalışılıyor
+                                    </span>
+                                    <button onclick="setStudentTaskStatus(${task.id}, 'TAMAMLANDI')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1 cursor-pointer ml-auto">
+                                        <span>[ ✓ TAMAMLA ]</span>
+                                    </button>
+                                    ` : isSkipped ? `
+                                    <span class="text-[11px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-xl">
+                                        Atlandı
+                                    </span>
+                                    ` : `
+                                    <button onclick="setStudentTaskStatus(${task.id}, 'DEVAM_EDIYOR')" class="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow-sm transition flex items-center gap-1 cursor-pointer">
+                                        <span>▶ Çalışmaya Başla</span>
+                                    </button>
+                                    <button onclick="setStudentTaskStatus(${task.id}, 'TAMAMLANDI')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1 cursor-pointer ml-auto">
+                                        <span>[ ✓ TAMAMLA ]</span>
+                                    </button>
+                                    `}
+                                </div>
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+                `;
+            }).join('')}
+        </div>
+    </div>
+    `;
+}
+
+// SET STUDENT TASK STATUS VIA REST API (PLANLANDI, DEVAM_EDIYOR, TAMAMLANDI)
+async function setStudentTaskStatus(taskId, targetStatus) {
+    const token = localStorage.getItem('yks_token');
+    const items = weeklyProgramState.items || [];
+    const task = items.find(i => i && i.id == taskId);
+    if (!task) return;
+
+    const prevStatus = task.status;
+    const prevCompStatus = task.completion_status;
+    task.status = targetStatus;
+    task.completion_status = targetStatus;
+
+    // Invalidate client cache
+    invalidateClientCache('/weekly-program');
+
+    try {
+        const res = await fetch(`${API_BASE}/weekly-program/${taskId}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ status: targetStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Durum güncellenemedi.');
+        invalidateClientCache('/weekly-program');
+        await renderWeeklyProgramView(weeklyActiveStudentId);
+    } catch (err) {
+        console.error("Task status update error:", err);
+        task.status = prevStatus;
+        task.completion_status = prevCompStatus;
+        alert("Görev durumu güncellenirken bir hata oluştu: " + (err.message || ''));
+        renderWeeklyProgramView(weeklyActiveStudentId);
+    }
+}
+window.setStudentTaskStatus = setStudentTaskStatus;
+
+// BACKWARD COMPATIBILITY ALIAS FOR TOGGLESTUDENTTASKCARD
+function toggleStudentTaskCard(taskId, markCompleted) {
+    return setStudentTaskStatus(taskId, markCompleted ? 'TAMAMLANDI' : 'PLANLANDI');
+}
+window.toggleStudentTaskCard = toggleStudentTaskCard;
+
+// START WEEKLY TASK STUDY SESSION -> UPDATE STATUS TO DEVAM_EDIYOR & OPEN TIMER
+async function startWeeklyTaskStudy(taskId, title, subjectName, startTime, endTime) {
+    let durationMins = 40;
+    if (startTime && endTime) {
+        try {
+            const [sh, sm] = startTime.split(':').map(Number);
+            const [eh, em] = endTime.split(':').map(Number);
+            const diff = (eh * 60 + em) - (sh * 60 + sm);
+            if (diff > 0 && diff <= 300) durationMins = diff;
+        } catch (_) {}
+    }
+
+    window.activeStudyTask = {
+        id: taskId,
+        title: title || 'Çalışma Görevi',
+        subjectName: subjectName || 'Ders',
+        startTime,
+        endTime,
+        durationMins
+    };
+
+    if (typeof setPresetTimer === 'function') {
+        setPresetTimer(durationMins);
+    }
+
+    try {
+        const token = localStorage.getItem('yks_token');
+        await fetch(`${API_BASE}/weekly-program/${taskId}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ status: 'DEVAM_EDIYOR' })
+        });
+        invalidateClientCache('/weekly-program');
+    } catch (e) {
+        console.warn("[TIMER START STATUS ERROR]", e);
+    }
+
+    location.hash = '#/timer';
+}
+window.startWeeklyTaskStudy = startWeeklyTaskStudy;
+
 function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, isStudentRole, savedNotice = false, errorNotice = null) {
     if (item && item.title) {
         const isComp = (item.status === 'TAMAMLANDI' || item.completion_status === 'TAMAMLANDI');
+        const isInProgress = (item.status === 'DEVAM_EDIYOR' || item.completion_status === 'DEVAM_EDIYOR');
+        const isSkipped = (item.status === 'ATLANDI' || item.completion_status === 'ATLANDI');
+
+        let studyIcon = '📌';
+        const stType = (item.study_type || '').toLowerCase();
+        if (stType.includes('konu')) studyIcon = '📚';
+        else if (stType.includes('soru')) studyIcon = '✏️';
+        else if (stType.includes('deneme')) studyIcon = '📝';
+        else if (stType.includes('kitap') || stType.includes('okuma')) studyIcon = '📖';
+
         return `
         <div id="cell_view_${cellDomId}" 
-             onclick="${isStudentRole ? `toggleStudentInlineTask('${cellDomId}', ${item.id}, ${!isComp})` : `activateInlineCellEdit('${cellDomId}')`}"
-             class="h-full min-h-[75px] rounded-xl p-2 flex flex-col justify-between cursor-pointer transition border text-[11px] group select-none relative ${
+             ${isStudentRole ? `onclick="toggleStudentInlineTask('${cellDomId}', ${item.id}, ${!isComp})"` : `onclick="activateInlineCellEdit('${cellDomId}')"`}
+             class="h-full min-h-[85px] rounded-xl p-2 flex flex-col justify-between cursor-pointer transition border text-[11px] group select-none relative ${
                  errorNotice 
                      ? 'bg-rose-950/80 border-rose-600 text-rose-200 shadow-md' 
                      : isComp 
                          ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-200 shadow-sm' 
-                         : savedNotice
-                             ? 'bg-slate-900 border-emerald-500 ring-1 ring-emerald-500/50 text-white shadow-md'
-                             : 'bg-slate-900/90 border-slate-700/80 text-white hover:border-indigo-500 shadow-sm'
+                         : isInProgress
+                             ? 'bg-amber-950/60 border-amber-700/80 text-amber-200 shadow-sm'
+                             : savedNotice
+                                 ? 'bg-slate-900 border-emerald-500 ring-1 ring-emerald-500/50 text-white shadow-md'
+                                 : 'bg-slate-900/90 border-slate-700/80 text-white hover:border-indigo-500 shadow-sm'
              }">
-            <div class="font-bold leading-snug line-clamp-3 whitespace-pre-wrap break-words text-[11px]">
-                ${isComp ? '<span class="text-emerald-400 font-black mr-1">✓</span>' : ''}${escapeHtml(item.title)}
+            <div>
+                <div class="flex items-center gap-1 text-[10px] text-slate-400 font-bold mb-0.5">
+                    <span>${studyIcon}</span>
+                    <span class="truncate">${escapeHtml(item.subject_name || item.study_type || 'Çalışma')}</span>
+                    ${item.assignment_id ? `<span class="px-1 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-700 text-[8px] font-black tracking-wide ml-auto">📋 ÖDEV</span>` : ''}
+                </div>
+                <div class="font-bold leading-snug line-clamp-2 whitespace-pre-wrap break-words text-[11px] ${isComp ? 'line-through text-emerald-300' : 'text-slate-100'}">
+                    ${escapeHtml(item.title)}
+                </div>
             </div>
-            <div class="flex items-center justify-between text-[9px] font-bold mt-1 pt-1 border-t border-slate-800/80">
-                <span class="${isComp ? 'text-emerald-400 font-extrabold' : 'text-slate-400'}">
-                    ${isComp ? '✓ Tamamlandı' : '○ Bekliyor'}
-                </span>
-                ${savedNotice ? `
-                <span class="text-[9px] text-emerald-400 font-extrabold animate-pulse">✓ Kaydedildi</span>
-                ` : errorNotice ? `
-                <span class="text-[9px] text-rose-400 font-extrabold" title="${escapeHtml(errorNotice)}">⚠ ${escapeHtml(errorNotice)}</span>
-                ` : !isStudentRole ? `
-                <span class="text-[9px] text-slate-500 opacity-0 group-hover:opacity-100 transition">✏️</span>
+
+            <div class="space-y-1 mt-1 pt-1 border-t border-slate-800/80">
+                ${isStudentRole ? `
+                    ${isComp ? `
+                    <div class="flex items-center justify-between text-[9px] font-bold">
+                        <span class="text-emerald-400 font-extrabold flex items-center gap-1">☑ TAMAMLANDI</span>
+                        <button onclick="event.stopPropagation(); toggleStudentInlineTask('${cellDomId}', ${item.id}, false)" class="text-[8px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-slate-200 underline cursor-pointer">Geri Al</button>
+                    </div>
+                    ` : isInProgress ? `
+                    <div class="flex items-center justify-between text-[9px] font-bold">
+                        <span class="text-amber-300 font-bold flex items-center gap-1 animate-pulse">◉ DEVAM EDİYOR</span>
+                    </div>
+                    <div class="flex items-center gap-1 mt-1">
+                        <button onclick="event.stopPropagation(); startWeeklyTaskStudy(${item.id}, '${escapeHtml(item.title)}', '${escapeHtml(item.subject_name || '')}', '${startTime}', '${endTime}')" class="flex-1 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[9px] shadow transition flex items-center justify-center gap-0.5 cursor-pointer">
+                            <span>▶ Zamanlayıcı</span>
+                        </button>
+                        <button onclick="event.stopPropagation(); toggleStudentInlineTask('${cellDomId}', ${item.id}, true)" class="px-1.5 py-1 rounded bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 font-bold text-[9px] transition cursor-pointer">
+                            <span>☐ Tamamla</span>
+                        </button>
+                    </div>
+                    ` : isSkipped ? `
+                    <div class="flex items-center justify-between text-[9px] font-bold">
+                        <span class="text-slate-500 font-bold">⊘ Atlandı</span>
+                    </div>
+                    ` : `
+                    <div class="flex items-center gap-1">
+                        <button onclick="event.stopPropagation(); startWeeklyTaskStudy(${item.id}, '${escapeHtml(item.title)}', '${escapeHtml(item.subject_name || '')}', '${startTime}', '${endTime}')" class="flex-1 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[9px] shadow transition flex items-center justify-center gap-0.5 cursor-pointer">
+                            <span>▶ ÇALIŞMAYA BAŞLA</span>
+                        </button>
+                        <button onclick="event.stopPropagation(); toggleStudentInlineTask('${cellDomId}', ${item.id}, true)" class="px-1.5 py-1 rounded bg-slate-800 hover:bg-emerald-950 text-slate-300 hover:text-emerald-300 border border-slate-700 hover:border-emerald-800 font-bold text-[9px] transition cursor-pointer" title="Doğrudan Tamamla">
+                            <span>☐</span>
+                        </button>
+                    </div>
+                    `}
                 ` : `
-                <span class="text-[8px] px-1 py-0.2 rounded ${isComp ? 'bg-amber-950 text-amber-300' : 'bg-emerald-950 text-emerald-300'} font-bold">
-                    ${isComp ? 'Geri Al' : 'Tamamla'}
-                </span>
+                    <div class="flex items-center justify-between text-[9px] font-bold">
+                        <span class="${isComp ? 'text-emerald-400 font-extrabold' : isInProgress ? 'text-amber-300 font-bold' : isSkipped ? 'text-slate-500 font-bold' : 'text-slate-400'}">
+                            ${isComp ? '✓ Tamamlandı' : isInProgress ? '◉ Devam Ediyor' : isSkipped ? '⊘ Atlandı' : '○ Planlandı'}
+                        </span>
+                        ${savedNotice ? `
+                        <span class="text-[9px] text-emerald-400 font-extrabold animate-pulse">✓ Kaydedildi</span>
+                        ` : errorNotice ? `
+                        <span class="text-[9px] text-rose-400 font-extrabold" title="${escapeHtml(errorNotice)}">⚠ ${escapeHtml(errorNotice)}</span>
+                        ` : `
+                        <span class="text-[9px] text-slate-500 opacity-0 group-hover:opacity-100 transition">✏️</span>
+                        `}
+                    </div>
                 `}
             </div>
         </div>
@@ -9505,7 +11284,9 @@ function renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, 
         return `
         <div id="cell_view_${cellDomId}" 
              ${!isStudentRole ? `onclick="activateInlineCellEdit('${cellDomId}')"` : ''}
-             class="h-full min-h-[75px] rounded-xl p-2 flex items-center justify-center cursor-pointer transition border border-dashed text-[11px] select-none hover:bg-slate-800/20 ${
+             class="h-full min-h-[75px] rounded-xl p-2 flex items-center justify-center transition border border-dashed text-[11px] select-none ${
+                 !isStudentRole ? 'cursor-pointer hover:bg-slate-800/20' : 'cursor-default opacity-40'
+             } ${
                  errorNotice ? 'border-rose-600 bg-rose-950/40 text-rose-300' : 'border-slate-800/80 text-slate-600 hover:text-indigo-300 hover:border-indigo-500/60'
              }">
             <span class="text-[10px] font-medium">${errorNotice ? `⚠ ${escapeHtml(errorNotice)}` : (!isStudentRole ? '+ Ders / Görev...' : 'Boş')}</span>
@@ -9527,15 +11308,29 @@ function activateInlineCellEdit(cellDomId) {
     const items = weeklyProgramState.items || [];
     const item = items.find(i => i && i.date === progDate && i.start_time === startTime);
     const existingTitle = item ? (item.title || '') : '';
+    const existingAssignmentId = item ? (item.assignment_id || '') : '';
+    const studentAsgs = weeklyProgramState.studentAssignments || [];
+
+    const asgOptionsHtml = studentAsgs.length > 0 ? `
+        <div class="mt-1 pt-1 border-t border-slate-800 flex items-center gap-1">
+            <select onchange="handleCellAssignmentSelect('${cellDomId}', this)" 
+                    class="w-full bg-slate-900 border border-indigo-500/50 rounded px-1.5 py-0.5 text-[9px] text-indigo-300 font-bold focus:outline-none cursor-pointer">
+                <option value="">📋 Ödev Bağla (İsteğe Bağlı)...</option>
+                ${studentAsgs.map(a => `<option value="${a.id}" data-title="${escapeHtml(a.title)}" data-subject="${a.subject_id || ''}" ${existingAssignmentId == a.id ? 'selected' : ''}>${escapeHtml(a.title)} (${escapeHtml(a.subject_name || 'Ödev')})</option>`).join('')}
+            </select>
+        </div>
+    ` : '';
 
     td.innerHTML = `
-    <div id="cell_edit_${cellDomId}" class="h-full min-h-[75px] rounded-xl p-1 bg-slate-950 border-2 border-indigo-500 shadow-xl flex flex-col justify-between z-20 relative">
+    <div id="cell_edit_${cellDomId}" class="h-full min-h-[85px] rounded-xl p-1.5 bg-slate-950 border-2 border-indigo-500 shadow-xl flex flex-col justify-between z-20 relative">
         <textarea id="cell_input_${cellDomId}" 
                   data-original-val="${escapeHtml(existingTitle)}"
+                  data-assignment-id="${existingAssignmentId}"
                   onblur="handleInlineCellBlur('${cellDomId}')"
                   onkeydown="handleInlineCellKeyDown(event, '${cellDomId}')"
-                  class="w-full bg-slate-900 border-none outline-none rounded-lg p-1.5 text-white font-bold text-[11px] leading-tight resize-none h-full min-h-[65px] focus:ring-0"
+                  class="w-full bg-slate-900 border-none outline-none rounded-lg p-1.5 text-white font-bold text-[11px] leading-tight resize-none h-full min-h-[50px] focus:ring-0"
                   placeholder="Ders, konu veya görev...">${escapeHtml(existingTitle)}</textarea>
+        ${asgOptionsHtml}
     </div>
     `;
 
@@ -9545,6 +11340,24 @@ function activateInlineCellEdit(cellDomId) {
         ta.setSelectionRange(ta.value.length, ta.value.length);
     }
 }
+
+function handleCellAssignmentSelect(cellDomId, selectEl) {
+    const aid = selectEl.value;
+    const ta = document.getElementById(`cell_input_${cellDomId}`);
+    if (!ta) return;
+    if (aid) {
+        const selectedOpt = selectEl.options[selectEl.selectedIndex];
+        const title = selectedOpt.getAttribute('data-title') || selectedOpt.text;
+        const subjId = selectedOpt.getAttribute('data-subject') || '';
+        ta.value = title;
+        ta.dataset.assignmentId = aid;
+        ta.dataset.subjectId = subjId;
+    } else {
+        ta.dataset.assignmentId = '';
+        ta.dataset.subjectId = '';
+    }
+}
+window.handleCellAssignmentSelect = handleCellAssignmentSelect;
 
 // KEYBOARD CONTROLLER (ENTER / TAB / ESC)
 function handleInlineCellKeyDown(e, cellDomId) {
@@ -9604,12 +11417,12 @@ function handleInlineCellBlur(cellDomId) {
     const origVal = (ta.dataset.originalVal || '').trim();
 
     // 1. If nothing changed, exit edit mode silently without any API call
-    if (newVal === origVal) {
+    if (newVal === origVal && !ta.dataset.assignmentId) {
         cancelInlineCellEdit(cellDomId, origVal);
         return;
     }
 
-    // 2. If value changed, trigger silent autosave
+    // 2. If value changed or assignment selected, trigger silent autosave
     saveInlineCellAuto(cellDomId, newVal, origVal);
 }
 
@@ -9629,6 +11442,10 @@ async function saveInlineCellAuto(cellDomId, newTitle, origTitle) {
     let items = weeklyProgramState.items || [];
     let existingItem = items.find(i => i && i.date === progDate && i.start_time === startTime);
 
+    const ta = document.getElementById(`cell_input_${cellDomId}`);
+    const assignmentId = (ta && ta.dataset.assignmentId) ? parseInt(ta.dataset.assignmentId) : (existingItem && existingItem.assignment_id ? existingItem.assignment_id : null);
+    const subjectId = (ta && ta.dataset.subjectId) ? parseInt(ta.dataset.subjectId) : (existingItem && existingItem.subject_id ? existingItem.subject_id : null);
+
     // If user cleared text completely -> Delete
     if (!newTitle) {
         if (existingItem && existingItem.id && !String(existingItem.id).startsWith('temp_')) {
@@ -9647,6 +11464,8 @@ async function saveInlineCellAuto(cellDomId, newTitle, origTitle) {
     let isNew = false;
     if (existingItem) {
         existingItem.title = newTitle;
+        existingItem.assignment_id = assignmentId;
+        if (subjectId) existingItem.subject_id = subjectId;
         td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, existingItem, isStudentRole, true);
     } else {
         isNew = true;
@@ -9658,6 +11477,8 @@ async function saveInlineCellAuto(cellDomId, newTitle, origTitle) {
             start_time: startTime,
             end_time: endTime,
             title: newTitle,
+            assignment_id: assignmentId,
+            subject_id: subjectId,
             status: 'PLANLANDI',
             publication_status: 'PUBLISHED'
         };
@@ -9683,7 +11504,7 @@ async function saveInlineCellAuto(cellDomId, newTitle, origTitle) {
             const res = await fetch(`${API_BASE}/weekly-program/${existingItem.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ title: newTitle })
+                body: JSON.stringify({ title: newTitle, assignment_id: assignmentId, subject_id: subjectId })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Güncellenemedi');
@@ -9698,6 +11519,8 @@ async function saveInlineCellAuto(cellDomId, newTitle, origTitle) {
                     start_time: startTime,
                     end_time: endTime,
                     title: newTitle,
+                    assignment_id: assignmentId,
+                    subject_id: subjectId,
                     status: 'PLANLANDI',
                     publication_status: 'PUBLISHED'
                 })
@@ -9775,16 +11598,18 @@ async function toggleStudentInlineTask(cellDomId, itemId, markCompleted) {
     const token = localStorage.getItem('yks_token');
 
     let items = weeklyProgramState.items || [];
-    const item = items.find(i => i && (i.id === itemId || (i.date === progDate && i.start_time === startTime)));
+    const item = items.find(i => i && (i.id == itemId || (i.date === progDate && i.start_time === startTime)));
     if (!item) return;
 
     const prevStatus = item.status;
+    const prevComp = item.completion_status;
     const newStatus = markCompleted ? 'TAMAMLANDI' : 'PLANLANDI';
     item.status = newStatus;
     item.completion_status = newStatus;
 
     td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, true);
     updateWeeklyKpiBar();
+    invalidateClientCache('/weekly-program');
 
     try {
         const res = await fetch(`${API_BASE}/weekly-program/${itemId}/status`, {
@@ -9794,14 +11619,16 @@ async function toggleStudentInlineTask(cellDomId, itemId, markCompleted) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Durum güncellenemedi.');
+        invalidateClientCache('/weekly-program');
     } catch (err) {
         console.error("Status toggle error:", err);
         item.status = prevStatus;
-        item.completion_status = prevStatus;
+        item.completion_status = prevComp;
         td.innerHTML = renderSingleCellHtml(cellDomId, progDate, dayName, startTime, endTime, item, true, false, 'Güncellenemedi');
         updateWeeklyKpiBar();
     }
 }
+window.toggleStudentInlineTask = toggleStudentInlineTask;
 
 // DYNAMIC IN-PLACE KPI UPDATE (NO RE-RENDER)
 function updateWeeklyKpiBar() {
@@ -11109,7 +12936,8 @@ async function submitBulkMufredatAssignResource(studentId, curriculumId) {
 // DYNAMIC ROLE SIDEBAR HANDLER (RULE #12 & #37)
 // ----------------------------------------------------
 function updateSidebarByRole() {
-    const role = currentUser ? currentUser.role : 'STUDENT';
+    const user = getCurrentUser();
+    const role = user ? user.role : 'STUDENT';
     const nav = document.getElementById('sidebarNavLinks') || document.querySelector('nav.flex-1');
     if (!nav) return;
 
@@ -11315,6 +13143,218 @@ async function renderStudentAssignmentsView() {
         // Today's homeworks
         const todayAssignments = assignments.filter(a => a.due_date === todayStr && a.status !== 'COMPLETED');
 
+async function startAssignmentStudy(assignmentId, programId, title, subjectName, startTime, endTime, progDate) {
+    const token = localStorage.getItem('yks_token');
+    if (programId) {
+        // Linked to weekly program -> use seamless weekly task study workflow
+        await startWeeklyTaskStudy(programId, title, subjectName, startTime || '08:00', endTime || '09:00');
+    } else {
+        // Unlinked assignment -> update assignment status to IN_PROGRESS and start timer
+        try {
+            await fetch(`${API_BASE}/odevler`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ id: assignmentId, status: 'IN_PROGRESS' })
+            });
+            invalidateClientCache('/odevler');
+        } catch (e) {
+            console.warn("[START ASG STATUS ERROR]", e);
+        }
+
+        window.activeStudyTask = {
+            id: 'asg_' + assignmentId,
+            assignmentId: assignmentId,
+            title: title || 'Ödev Çalışması',
+            subjectName: subjectName || 'Ders',
+            startTime: startTime || '08:00',
+            endTime: endTime || '09:00',
+            durationMins: 40
+        };
+
+        if (typeof setPresetTimer === 'function') {
+            setPresetTimer(40);
+        }
+
+        location.hash = '#/timer';
+    }
+}
+window.startAssignmentStudy = startAssignmentStudy;
+
+function navigateToWeeklyProgramSlot(targetDate) {
+    if (targetDate) {
+        const d = new Date(targetDate);
+        if (!isNaN(d.getTime())) {
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+            const mon = new Date(d.setDate(diff));
+            weeklyCurrentWeekStart = mon.toISOString().split('T')[0];
+        }
+    }
+    navigateView('program');
+}
+window.navigateToWeeklyProgramSlot = navigateToWeeklyProgramSlot;
+
+        // Function to render single assignment card
+        function renderSingleAssignmentCard(a, todayStr, currentUser) {
+            const isCompleted = a.status === 'COMPLETED';
+            const isOverdue = a.status === 'OVERDUE' || (a.due_date && a.due_date < todayStr && !isCompleted);
+            const isToday = (a.due_date === todayStr && !isCompleted && !isOverdue);
+            
+            let dateBadgeHtml = '';
+            if (isCompleted) {
+                const compTimeRaw = a.completed_at ? String(a.completed_at).trim() : '';
+                const compTimeStr = compTimeRaw ? compTimeRaw.substring(0, 16).replace('T', ' ') : '';
+                if (compTimeStr) {
+                    dateBadgeHtml = `
+                    <div class="flex flex-col items-end gap-0.5">
+                        <span class="text-[10px] font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 px-2.5 py-1 rounded-lg">✓ TAMAMLANDI</span>
+                        <span class="text-[9px] font-semibold text-slate-500 dark:text-slate-400">Tamamlanma: ${escapeHtml(compTimeStr)}</span>
+                    </div>`;
+                } else {
+                    dateBadgeHtml = `<span class="text-[10px] font-extrabold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 px-2.5 py-1 rounded-lg">✓ TAMAMLANDI</span>`;
+                }
+            } else if (isOverdue) {
+                dateBadgeHtml = `<span class="text-[10px] font-black text-white bg-rose-600 border border-rose-700 px-2.5 py-1 rounded-lg shadow-sm">⚠️ GECİKMİŞ (${escapeHtml(a.due_date || '')})</span>`;
+            } else if (isToday) {
+                dateBadgeHtml = `<span class="text-[10px] font-extrabold text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700 px-2.5 py-1 rounded-lg">🔴 BUGÜN TESLİM</span>`;
+            } else {
+                dateBadgeHtml = `<span class="text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/80 border border-blue-200 dark:border-blue-800 px-2.5 py-1 rounded-lg">📅 Teslim: ${escapeHtml(a.due_date || '')}</span>`;
+            }
+
+            const targetQ = parseInt(a.target_question_count) || 0;
+            const compQ = parseInt(a.completed_count) || (isCompleted ? targetQ : 0);
+            const qPct = targetQ > 0 ? Math.min(100, Math.round((compQ / targetQ) * 100)) : 0;
+
+            const safeTitle = (a.title || '').replace(/'/g, "\\'");
+            const safeSubject = (a.subject_name || 'Genel').replace(/'/g, "\\'");
+
+            return `
+            <div class="glass-card p-5 border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 rounded-2xl flex flex-col justify-between min-h-[280px] hover:border-slate-300 dark:hover:border-slate-700 transition shadow-sm">
+                <div>
+                    <!-- 1. HEADER ROW: BADGES -->
+                    <div class="flex items-center justify-between gap-2 mb-3">
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            ${a.student_name ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">👤 ${escapeHtml(a.student_name)} ${escapeHtml(a.student_surname || '')}</span>` : ''}
+                            <span class="text-[10px] font-bold px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/80 uppercase tracking-wider">${escapeHtml(a.subject_name || 'Genel')}</span>
+                            ${a.is_scheduled ? `
+                            <span onclick="event.stopPropagation(); navigateToWeeklyProgramSlot('${escapeHtml(a.program_date || '')}')" 
+                                  class="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900 transition" 
+                                  title="${a.program_date ? `Haftalık Programda: ${escapeHtml(a.program_date)} ${escapeHtml(a.program_start_time || '')}` : 'Haftalık Programda'}">
+                                📅 HAFTALIK PROGRAMDA
+                            </span>` : ''}
+                        </div>
+                        ${dateBadgeHtml}
+                    </div>
+
+                    <!-- 2. HOMEWORK TITLE & TOPIC -->
+                    <h3 class="text-sm font-bold text-slate-900 dark:text-white mb-1 leading-tight">${escapeHtml(a.title || '')}</h3>
+                    ${a.topic_name ? `<p class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">${escapeHtml(a.topic_name)}</p>` : ''}
+
+                    <!-- 3. RESOURCE INFO (ONLY IF EXISTS) -->
+                    ${a.resource_title ? `<p class="text-xs text-slate-500 dark:text-slate-400 font-medium mb-2 flex items-center gap-1.5">📚 Kaynak: <span class="text-slate-700 dark:text-slate-200 font-semibold">${escapeHtml(a.resource_title)}</span></p>` : ''}
+
+                    <!-- 4. TASK / DESCRIPTION (ONLY IF EXISTS) -->
+                    ${(a.section_range || a.description) ? `
+                    <div class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 text-xs text-slate-700 dark:text-slate-200 mb-2">
+                        <span class="text-[10px] font-bold text-slate-500 dark:text-slate-400 block mb-0.5">📋 GÖREV / AÇIKLAMA:</span>
+                        ${escapeHtml(a.section_range || a.description)}
+                    </div>
+                    ` : ''}
+
+                    <!-- 5. QUESTION TARGET & PROGRESS BAR (ONLY IF TARGET > 0) -->
+                    ${targetQ > 0 ? `
+                    <div class="mb-2">
+                        <div class="flex justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
+                            <span>Soru Hedefi</span>
+                            <span class="text-slate-900 dark:text-white font-black">${compQ} / ${targetQ} Soru</span>
+                        </div>
+                        <div class="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                            <div class="h-full ${isCompleted ? 'bg-emerald-500' : 'bg-blue-600'} rounded-full transition-all duration-300" style="width: ${qPct}%"></div>
+                        </div>
+                        <div class="text-right mt-0.5">
+                            <span class="text-[10px] font-extrabold ${isCompleted ? 'text-emerald-500' : isOverdue ? 'text-rose-500' : 'text-blue-500'}">%${qPct} tamamlandı</span>
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    <!-- 6. COACH NOTE (ONLY IF EXISTS AND NON-EMPTY) -->
+                    ${(a.coach_note && a.coach_note.trim()) ? `
+                    <div class="bg-amber-50 dark:bg-amber-950/30 p-2.5 rounded-xl border border-amber-200 dark:border-amber-800/50 text-xs text-amber-900 dark:text-amber-200 mb-2">
+                        <div class="font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1 mb-0.5">
+                            💡 Koç Notu
+                        </div>
+                        <p class="leading-snug">${escapeHtml(a.coach_note)}</p>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <!-- 7. ACTION BUTTONS & DYNAMIC STATUS -->
+                <div class="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 mt-2">
+                    <button onclick="openAssignmentDetailModal(${a.id})" class="btn-secondary-slate bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1 cursor-pointer">
+                        <i data-lucide="info" class="w-3.5 h-3.5 text-blue-600"></i> Detaylar
+                    </button>
+
+                    ${currentUser.role === 'STUDENT' ? (
+                        !isCompleted ? (
+                            a.status === 'PENDING' ? `
+                            <button onclick="startAssignmentStudy(${a.id}, ${a.program_id || 'null'}, '${safeTitle}', '${safeSubject}', '${a.program_start_time || '08:00'}', '${a.program_end_time || '09:00'}', '${a.program_date || ''}')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition cursor-pointer flex items-center gap-1">
+                                <i data-lucide="play" class="w-3.5 h-3.5"></i> ▶ Çalışmaya Başla
+                            </button>
+                            ` : `
+                            <button onclick="submitQuickCompleteAssignment(${a.id})" class="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i> ▶ Çalışmaya Devam Et / Tamamla
+                            </button>
+                            `
+                        ) : `
+                        <span class="text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700/80 px-3 py-1.5 rounded-xl flex items-center gap-1">
+                            ✓ Tamamlandı
+                        </span>
+                        `
+                    ) : (
+                        !isCompleted ? `
+                        <button onclick="submitQuickCompleteAssignment(${a.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition flex items-center gap-1 cursor-pointer">
+                            <i data-lucide="check" class="w-3.5 h-3.5"></i> Onayla / Tamamla
+                        </button>
+                        ` : `
+                        <span class="text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700/80 px-3 py-1.5 rounded-xl flex items-center gap-1">
+                            ✓ Tamamlandı
+                        </span>
+                        `
+                    )}
+                </div>
+            </div>
+            `;
+        }
+
+        // Group assignments into 4 distinct categories
+        const overdueAssignments = [];
+        const todayAssignmentsList = [];
+        const upcomingAssignments = [];
+        const completedAssignments = [];
+
+        assignments.forEach(a => {
+            const isComp = (a.status === 'COMPLETED');
+            const isOver = (a.status === 'OVERDUE' || (a.due_date && a.due_date < todayStr && !isComp));
+            const isTod = (a.due_date === todayStr && !isComp && !isOver);
+
+            if (isComp) {
+                completedAssignments.push(a);
+            } else if (isOver) {
+                overdueAssignments.push(a);
+            } else if (isTod) {
+                todayAssignmentsList.push(a);
+            } else {
+                upcomingAssignments.push(a);
+            }
+        });
+
+        const assignmentGroups = [
+            { key: 'OVERDUE', title: 'Gecikmiş Ödevler', icon: '⚠️', count: overdueAssignments.length, colorClass: 'text-rose-600 dark:text-rose-400', items: overdueAssignments },
+            { key: 'TODAY', title: 'Bugün Teslim', icon: '🔴', count: todayAssignmentsList.length, colorClass: 'text-amber-600 dark:text-amber-400', items: todayAssignmentsList },
+            { key: 'UPCOMING', title: 'Yaklaşan Ödevler', icon: '📅', count: upcomingAssignments.length, colorClass: 'text-blue-600 dark:text-blue-400', items: upcomingAssignments },
+            { key: 'COMPLETED', title: 'Tamamlanan Ödevler', icon: '✓', count: completedAssignments.length, colorClass: 'text-emerald-600 dark:text-emerald-400', items: completedAssignments }
+        ];
+
         let html = `
         <!-- SUMMARY KPI CARDS (6 CARDS IN HIGH-CONTRAST LIGHT/DARK TOKEN SYSTEM) -->
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
@@ -11385,32 +13425,11 @@ async function renderStudentAssignmentsView() {
             </div>
         </div>
 
-        <!-- 📌 BUGÜN YAPILACAKLAR (TODAY'S HOMEWORKS SECTION) -->
-        ${todayAssignments.length > 0 ? `
-        <div class="glass-card p-4 border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20 mb-6 rounded-2xl shadow-sm">
-            <div class="flex items-center gap-2 mb-3">
-                <span class="text-base">📌</span>
-                <h4 class="text-xs font-bold text-[#0F172A] dark:text-white">Bugün Yapılacak Ödevler (${todayAssignments.length})</h4>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                ${todayAssignments.map(ta => `
-                <div class="bg-white dark:bg-slate-900 p-3 rounded-xl border border-[#E2E8F0] dark:border-slate-800 flex items-center justify-between shadow-sm">
-                    <div>
-                        <h5 class="text-xs font-bold text-[#0F172A] dark:text-white">${ta.title}</h5>
-                        <p class="text-[11px] text-[#64748B] dark:text-slate-400">${ta.subject_name || 'Ders'} • ${ta.target_question_count || 0} Soru</p>
-                    </div>
-                    <span class="text-[10px] font-extrabold px-2.5 py-1 rounded-lg bg-orange-50 text-[#C2410C] border border-[#FED7AA]">🔴 Bugün</span>
-                </div>
-                `).join('')}
-            </div>
-        </div>
-        ` : ''}
-
         <!-- OVERDUE WARNING BANNER -->
         ${summary.overdue > 0 ? `
         <div class="glass-card p-4 border border-rose-200 dark:border-rose-800/80 bg-rose-50 dark:bg-rose-950/40 mb-6 rounded-2xl flex items-center justify-between gap-4 shadow-sm">
             <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-900/60 border border-rose-200 dark:border-rose-700/60 flex items-center justify-center text-[#DC2626] dark:text-rose-400 text-lg">
+                <div class="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-900/60 border border-rose-200 dark:border-rose-700/60 flex items-center justify-center text-[#DC2626] dark:text-rose-400 text-lg font-black">
                     ⚠️
                 </div>
                 <div>
@@ -11418,29 +13437,29 @@ async function renderStudentAssignmentsView() {
                     <p class="text-[11px] text-[#64748B] dark:text-slate-300 mt-0.5">Teslim tarihi geçmiş ödevleri inceleyerek tamamlanma durumlarını kontrol edebilirsiniz.</p>
                 </div>
             </div>
-            <button onclick="setAssignmentsFilter('OVERDUE')" class="bg-[#DC2626] hover:bg-[#B91C1C] text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition shadow">
+            <button onclick="setAssignmentsFilter('OVERDUE')" class="bg-[#DC2626] hover:bg-[#B91C1C] text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition shadow cursor-pointer">
                 Gecikenleri Filtrele
             </button>
         </div>
         ` : ''}
 
-        <!-- CONTROLS & FILTER BAR (PRIMARY BLUE ACTIVE TAB - NO PURPLE) -->
+        <!-- CONTROLS & FILTER BAR -->
         <div class="glass-card p-4 border border-[#E2E8F0] dark:border-slate-800 mb-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shadow-sm">
             <!-- Filter Tabs -->
             <div class="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-                <button onclick="setAssignmentsFilter('ALL')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentAssignmentsFilter === 'ALL' ? 'bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
+                <button onclick="setAssignmentsFilter('ALL')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${currentAssignmentsFilter === 'ALL' ? 'bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
                     Tüm Ödevler (${summary.total})
                 </button>
-                <button onclick="setAssignmentsFilter('PENDING')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentAssignmentsFilter === 'PENDING' ? 'bg-[#FFF7ED] text-[#C2410C] border border-[#FED7AA] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
+                <button onclick="setAssignmentsFilter('PENDING')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${currentAssignmentsFilter === 'PENDING' ? 'bg-[#FFF7ED] text-[#C2410C] border border-[#FED7AA] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
                     Bekleyen (${summary.pending})
                 </button>
-                <button onclick="setAssignmentsFilter('IN_PROGRESS')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentAssignmentsFilter === 'IN_PROGRESS' ? 'bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
+                <button onclick="setAssignmentsFilter('IN_PROGRESS')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${currentAssignmentsFilter === 'IN_PROGRESS' ? 'bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
                     Devam Eden (${summary.in_progress})
                 </button>
-                <button onclick="setAssignmentsFilter('COMPLETED')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentAssignmentsFilter === 'COMPLETED' ? 'bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
+                <button onclick="setAssignmentsFilter('COMPLETED')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${currentAssignmentsFilter === 'COMPLETED' ? 'bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
                     Tamamlanan (${summary.completed})
                 </button>
-                <button onclick="setAssignmentsFilter('OVERDUE')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${currentAssignmentsFilter === 'OVERDUE' ? 'bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
+                <button onclick="setAssignmentsFilter('OVERDUE')" class="px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${currentAssignmentsFilter === 'OVERDUE' ? 'bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA] shadow-sm' : 'bg-[#F8FAFC] dark:bg-slate-900 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}">
                     Geciken (${summary.overdue})
                 </button>
             </div>
@@ -11450,7 +13469,7 @@ async function renderStudentAssignmentsView() {
                 ${currentUser.role !== 'STUDENT' ? `
                 <select onchange="handleAssignmentStudentSelect(event)" class="bg-white dark:bg-slate-900 border border-[#CBD5E1] dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-[#0F172A] dark:text-white focus:outline-none focus:border-[#2563EB] font-semibold shadow-sm w-full sm:w-auto">
                     <option value="ALL" ${!selectedStudentId || selectedStudentId === 'ALL' ? 'selected' : ''}>👥 Tüm Öğrencilerim</option>
-                    ${coachStudents.map(s => `<option value="${s.id}" ${selectedStudentId == s.id ? 'selected' : ''}>👤 ${s.name} ${s.surname || ''}</option>`).join('')}
+                    ${coachStudents.map(s => `<option value="${s.id}" ${selectedStudentId == s.id ? 'selected' : ''}>👤 ${escapeHtml(s.name)} ${escapeHtml(s.surname || '')}</option>`).join('')}
                 </select>
                 ` : ''}
 
@@ -11459,138 +13478,43 @@ async function renderStudentAssignmentsView() {
                 </div>
 
                 ${currentUser.role !== 'STUDENT' ? `
-                <button onclick="openCreateAssignmentModal()" class="w-full sm:w-auto justify-center bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow flex items-center gap-1.5 whitespace-nowrap">
+                <button onclick="openCreateAssignmentModal()" class="w-full sm:w-auto justify-center bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow flex items-center gap-1.5 whitespace-nowrap cursor-pointer">
                     <i data-lucide="plus-circle" class="w-4 h-4"></i> + Ödev Ver
                 </button>
                 ` : ''}
             </div>
         </div>
 
-        <!-- ASSIGNMENT CARDS GRID (CLEAN SaaS CARD LAYOUT) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            ${assignments.length === 0 ? `
-            <div class="col-span-full glass-card p-12 text-center text-[#64748B] border border-[#E2E8F0] dark:border-slate-800 bg-white dark:bg-slate-900 rounded-2xl shadow-sm">
-                <i data-lucide="book-open" class="w-12 h-12 text-[#94A3B8] mx-auto mb-3"></i>
-                <h4 class="text-sm font-bold text-[#0F172A] dark:text-slate-200">
-                    ${currentUser.role === 'STUDENT' ? 'Henüz atanmış bir ödeviniz yok.' : 'Henüz öğrenciye atanmış bir ödev bulunmuyor.'}
-                </h4>
-                <p class="text-xs text-[#64748B] dark:text-slate-400 mt-1">
-                    ${currentUser.role === 'STUDENT' ? 'Koçunuz yeni bir ödev atadığında burada görüntülenecektir.' : 'Sağ üstteki "+ Ödev Ver" butonunu kullanarak yeni ödev atayabilirsiniz.'}
-                </p>
-            </div>
-            ` : ''}
-
-            ${assignments.map(a => {
-                const isCompleted = a.status === 'COMPLETED';
-                const isOverdue = a.status === 'OVERDUE' || (a.due_date < todayStr && !isCompleted);
-                
-                let dateBadgeHtml = '';
-                if (isCompleted) {
-                    dateBadgeHtml = `<span class="text-[10px] font-bold text-[#047857] bg-[#ECFDF5] border border-[#A7F3D0] px-2.5 py-1 rounded-lg">✓ Tamamlandı</span>`;
-                } else if (isOverdue) {
-                    dateBadgeHtml = `<span class="text-[10px] font-extrabold text-[#B91C1C] bg-[#FEF2F2] border border-[#FECACA] px-2.5 py-1 rounded-lg">⚠️ Gecikmiş (${a.due_date})</span>`;
-                } else if (a.due_date === todayStr) {
-                    dateBadgeHtml = `<span class="text-[10px] font-extrabold text-[#C2410C] bg-[#FFF7ED] border border-[#FED7AA] px-2.5 py-1 rounded-lg">🔴 Bugün Teslim</span>`;
-                } else {
-                    dateBadgeHtml = `<span class="text-[10px] font-bold text-[#1D4ED8] bg-[#EFF6FF] border border-[#BFDBFE] px-2.5 py-1 rounded-lg">📅 Teslim: ${a.due_date}</span>`;
-                }
-
-                const targetQ = a.target_question_count || 0;
-                const compQ = a.completed_count || (isCompleted ? targetQ : 0);
-                const qPct = targetQ > 0 ? Math.min(100, Math.round((compQ / targetQ) * 100)) : 0;
-
-                return `
-                <div class="glass-card p-5 border border-[#E2E8F0] dark:border-slate-800 bg-white dark:bg-slate-900 rounded-2xl flex flex-col justify-between hover:border-[#CBD5E1] transition shadow-sm">
-                    <div>
-                        <!-- 1. HEADER ROW: BADGES -->
-                        <div class="flex items-center justify-between gap-2 mb-3">
-                            <div class="flex items-center gap-1.5 flex-wrap">
-                                ${a.student_name ? `<span class="text-[10px] font-black px-2.5 py-0.5 rounded-lg bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE]">👤 ${a.student_name} ${a.student_surname || ''}</span>` : ''}
-                                <span class="text-[10px] font-extrabold px-2.5 py-0.5 rounded-lg bg-[#F8FAFC] dark:bg-slate-800 text-[#475569] dark:text-slate-300 border border-[#E2E8F0] dark:border-slate-700 uppercase tracking-wider">${a.subject_name || 'Genel'}</span>
-                            </div>
-                            ${dateBadgeHtml}
-                        </div>
-
-                        <!-- 2. HOMEWORK TITLE & TOPIC -->
-                        <h3 class="text-sm font-bold text-[#0F172A] dark:text-white mb-1 leading-tight">${a.title}</h3>
-                        ${a.topic_name ? `<p class="text-xs font-medium text-[#64748B] dark:text-slate-400 mb-2">${a.topic_name}</p>` : ''}
-
-                        <!-- 3. RESOURCE INFO (ONLY IF EXISTS - NO EMPTY PLACEHOLDERS) -->
-                        ${a.resource_title ? `<p class="text-xs text-[#64748B] font-medium mb-3 flex items-center gap-1.5">📚 Kaynak: <span class="text-[#334155] dark:text-slate-300 font-semibold">${a.resource_title}</span></p>` : ''}
-
-                        <!-- 4. TASK / DESCRIPTION (NO DARK GRAY BOXES - ONLY IF EXISTS) -->
-                        ${(a.section_range || a.description) ? `
-                        <div class="p-3 rounded-xl bg-[#F1F5F9] dark:bg-slate-800/80 border border-[#E2E8F0] dark:border-slate-700/80 text-xs text-[#334155] dark:text-slate-300 mb-3">
-                            <span class="text-[10px] font-bold text-[#64748B] dark:text-slate-400 block mb-0.5">📋 GÖREV / AÇIKLAMA:</span>
-                            ${a.section_range || a.description}
-                        </div>
-                        ` : ''}
-
-                        <!-- 5. QUESTION TARGET & PROGRESS BAR -->
-                        ${targetQ > 0 ? `
-                        <div class="mb-3">
-                            <div class="flex justify-between text-[11px] font-bold text-[#64748B] dark:text-slate-400 mb-1">
-                                <span>Soru Hedefi</span>
-                                <span class="text-[#0F172A] dark:text-white">${compQ} / ${targetQ} Soru</span>
-                            </div>
-                            <div class="w-full h-2 bg-[#E2E8F0] dark:bg-slate-800 rounded-full overflow-hidden">
-                                <div class="h-full ${isCompleted ? 'bg-[#059669]' : 'bg-[#2563EB]'} rounded-full transition-all duration-300" style="width: ${qPct}%"></div>
-                            </div>
-                            <div class="text-right mt-1">
-                                <span class="text-[10px] font-extrabold ${isCompleted ? 'text-[#059669]' : isOverdue ? 'text-[#DC2626]' : 'text-[#2563EB]'}">%${qPct} tamamlandı</span>
-                            </div>
-                        </div>
-                        ` : ''}
-
-                        <!-- 6. COACH NOTE (ONLY IF EXISTS - LIGHT AMBER BOX) -->
-                        ${a.coach_note ? `
-                        <div class="bg-[#FFFBEB] dark:bg-amber-950/30 p-3 rounded-xl border border-[#FDE68A] dark:border-amber-800/50 text-xs text-[#78350F] dark:text-amber-200 mb-3">
-                            <div class="font-bold text-[#B45309] dark:text-amber-400 flex items-center gap-1 mb-0.5">
-                                💡 Koç Notu
-                            </div>
-                            <p class="leading-snug">${a.coach_note}</p>
-                        </div>
-                        ` : ''}
-                    </div>
-
-                    <!-- 7. ACTION BUTTONS & DYNAMIC STATUS -->
-                    <div class="pt-3 border-t border-[#E2E8F0] dark:border-slate-800 flex items-center justify-between gap-2 mt-2">
-                        <button onclick="openAssignmentDetailModal(${a.id})" class="btn-secondary-slate bg-white dark:bg-slate-900 border border-[#CBD5E1] dark:border-slate-700 text-[#475569] dark:text-slate-300 hover:bg-[#F8FAFC] px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1">
-                            <i data-lucide="info" class="w-3.5 h-3.5 text-[#2563EB]"></i> Detaylar
-                        </button>
-
-                        ${currentUser.role === 'STUDENT' ? (
-                            !isCompleted ? (
-                                a.status === 'PENDING' ? `
-                                <button onclick="updateProgramStatus(${a.id}, 'IN_PROGRESS')" class="bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition">
-                                    Başla
-                                </button>
-                                ` : `
-                                <button onclick="submitQuickCompleteAssignment(${a.id})" class="bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition flex items-center gap-1">
-                                    <i data-lucide="check" class="w-3.5 h-3.5"></i> Devam Et / Tamamla
-                                </button>
-                                `
-                            ) : `
-                            <span class="text-xs font-bold text-[#047857] bg-[#ECFDF5] border border-[#A7F3D0] px-3 py-1.5 rounded-xl flex items-center gap-1">
-                                ✓ Tamamlandı
-                            </span>
-                            `
-                        ) : (
-                            !isCompleted ? `
-                            <button onclick="submitQuickCompleteAssignment(${a.id})" class="bg-[#059669] hover:bg-[#047857] text-white font-bold text-xs px-3.5 py-1.5 rounded-xl shadow transition flex items-center gap-1">
-                                <i data-lucide="check" class="w-3.5 h-3.5"></i> Onayla / Tamamla
-                            </button>
-                            ` : `
-                            <span class="text-xs font-bold text-[#047857] bg-[#ECFDF5] border border-[#A7F3D0] px-3 py-1.5 rounded-xl flex items-center gap-1">
-                                ✓ Tamamlandı
-                            </span>
-                            `
-                        )}
-                    </div>
-                </div>
-                `;
-            }).join('')}
+        <!-- ASSIGNMENT GROUPS (ORDER: GECİKMİŞ -> BUGÜN TESLİM -> YAKLAŞAN -> TAMAMLANAN) -->
+        ${assignments.length === 0 ? `
+        <div class="glass-card p-12 text-center text-[#64748B] border border-[#E2E8F0] dark:border-slate-800 bg-white dark:bg-slate-900 rounded-2xl shadow-sm">
+            <i data-lucide="book-open" class="w-12 h-12 text-[#94A3B8] mx-auto mb-3"></i>
+            <h4 class="text-sm font-bold text-[#0F172A] dark:text-slate-200">
+                ${currentUser.role === 'STUDENT' ? 'Henüz atanmış bir ödeviniz yok.' : 'Henüz öğrenciye atanmış bir ödev bulunmuyor.'}
+            </h4>
+            <p class="text-xs text-[#64748B] dark:text-slate-400 mt-1">
+                ${currentUser.role === 'STUDENT' ? 'Koçunuz yeni bir ödev atadığında burada görüntülenecektir.' : 'Sağ üstteki "+ Ödev Ver" butonunu kullanarak yeni ödev atayabilirsiniz.'}
+            </p>
         </div>
+        ` : `
+        <div class="space-y-6">
+            ${assignmentGroups.filter(g => g.items.length > 0).map((g, idx) => `
+            <div class="${idx > 0 ? 'pt-4 border-t border-slate-200 dark:border-slate-800/80' : ''}">
+                <div class="flex items-center gap-2 mb-3">
+                    <h3 class="text-xs sm:text-sm font-black flex items-center gap-1.5 ${g.colorClass}">
+                        <span>${g.icon}</span> ${g.title}
+                    </h3>
+                    <span class="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                        ${g.count}
+                    </span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    ${g.items.map(a => renderSingleAssignmentCard(a, todayStr, currentUser)).join('')}
+                </div>
+            </div>
+            `).join('')}
+        </div>
+        `}
         `;
 
         container.innerHTML = html;
@@ -12487,10 +14411,10 @@ function applyTheme(theme) {
     const sidebarIcon = document.getElementById('sidebarThemeIcon');
     const sidebarText = document.getElementById('sidebarThemeText');
 
-    // 1. Kullanıcı AÇIK TEMADA ise (isLight === true): Buton "🌙 Koyu Tema" göstermeli
-    // 2. Kullanıcı KOYU TEMADA ise (isLight === false): Buton "☀️ Açık Tema" göstermeli
+    // 1. Kullanıcı AÇIK TEMADA ise (isLight === true): Buton "🌙 Koyu Temaya Geç" göstermeli
+    // 2. Kullanıcı KOYU TEMADA ise (isLight === false): Buton "☀️ Açık Temaya Geç" göstermeli
     const targetIcon = isLight ? '🌙' : '☀️';
-    const targetText = isLight ? 'Koyu Tema' : 'Açık Tema';
+    const targetText = isLight ? 'Koyu Temaya Geç' : 'Açık Temaya Geç';
     const targetTitle = isLight ? 'Koyu Temaya Geç' : 'Açık Temaya Geç';
 
     if (themeIcon) themeIcon.textContent = targetIcon;
