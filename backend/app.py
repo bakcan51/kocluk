@@ -550,16 +550,25 @@ def login():
     """, (norm_username, norm_username))
     user = cursor.fetchone()
 
-    if user and user['lockout_until']:
-        cursor.execute("SELECT datetime('now') < datetime(?);", (user['lockout_until'],))
-        is_locked = cursor.fetchone()[0]
-        if is_locked:
-            conn.close()
-            return jsonify({
-                'success': False,
-                'error': '5 başarısız giriş denemesi nedeniyle hesabınız geçici olarak kilitlenmiştir. Lütfen koçunuzla iletişime geçin.',
-                'message': '5 başarısız giriş denemesi nedeniyle hesabınız geçici olarak kilitlenmiştir. Lütfen koçunuzla iletişime geçin.'
-            }), 429
+    if user and user.get('lockout_until'):
+        try:
+            from datetime import datetime
+            lock_val = user['lockout_until']
+            is_locked = False
+            if isinstance(lock_val, datetime):
+                is_locked = datetime.now() < (lock_val.replace(tzinfo=None) if lock_val.tzinfo else lock_val)
+            elif isinstance(lock_val, str):
+                dt = datetime.fromisoformat(lock_val.replace('Z', '+00:00'))
+                is_locked = datetime.now() < (dt.replace(tzinfo=None) if dt.tzinfo else dt)
+            if is_locked:
+                conn.close()
+                return jsonify({
+                    'success': False,
+                    'error': '5 başarısız giriş denemesi nedeniyle hesabınız geçici olarak kilitlenmiştir. Lütfen koçunuzla iletişime geçin.',
+                    'message': '5 başarısız giriş denemesi nedeniyle hesabınız geçici olarak kilitlenmiştir. Lütfen koçunuzla iletişime geçin.'
+                }), 429
+        except Exception as e:
+            print(f"[LOCKOUT CHECK WARN] {e}")
     
     valid_password = werkzeug.security.check_password_hash(user['password_hash'], password) if user else False
 
@@ -567,11 +576,18 @@ def login():
         if user:
             failed_cnt = (user['failed_login_attempts'] or 0) + 1
             if failed_cnt >= 5:
-                cursor.execute("""
-                UPDATE users 
-                SET failed_login_attempts = ?, lockout_until = datetime('now', '+15 minutes')
-                WHERE id = ?;
-                """, (failed_cnt, user['id']))
+                if is_postgres():
+                    cursor.execute("""
+                    UPDATE users 
+                    SET failed_login_attempts = %s, lockout_until = CURRENT_TIMESTAMP + INTERVAL '15 minutes'
+                    WHERE id = %s;
+                    """, (failed_cnt, user['id']))
+                else:
+                    cursor.execute("""
+                    UPDATE users 
+                    SET failed_login_attempts = ?, lockout_until = datetime('now', '+15 minutes')
+                    WHERE id = ?;
+                    """, (failed_cnt, user['id']))
             else:
                 cursor.execute("UPDATE users SET failed_login_attempts = ? WHERE id = ?;", (failed_cnt, user['id']))
             conn.commit()
