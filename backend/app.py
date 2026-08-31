@@ -6799,7 +6799,7 @@ def build_student_analytics_context(cursor, student_id):
         FROM exam_test_results tr
         JOIN subjects s ON tr.subject_id = s.id
         WHERE tr.exam_attempt_id IN ({placeholders})
-        GROUP BY tr.subject_id
+        GROUP BY tr.subject_id, s.name
         ORDER BY avg_net DESC;
         """, valid_ids)
         subject_summary = [dict(r) for r in cursor.fetchall()]
@@ -6818,7 +6818,7 @@ def build_student_analytics_context(cursor, student_id):
         JOIN subjects s ON tr.subject_id = s.id
         JOIN topics ct ON tr.curriculum_topic_id = ct.id
         WHERE tr.exam_attempt_id IN ({placeholders})
-        GROUP BY tr.curriculum_topic_id
+        GROUP BY ct.id, ct.name, s.name
         ORDER BY total_wrong DESC, total_blank DESC;
         """, valid_ids)
         for tr in cursor.fetchall():
