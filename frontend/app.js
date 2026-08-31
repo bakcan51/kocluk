@@ -1136,6 +1136,10 @@ async function navigateView(viewName, paramId = null, updateHash = true) {
         } else if (viewName === 'raporlar' || viewName === 'reports') {
             await renderReportsView();
         } else if (viewName === 'ai-coach') {
+            const user = getCurrentUser();
+            if (user && user.role === 'STUDENT') {
+                return navigateView('dashboard');
+            }
             await renderAICoachView();
         } else if (viewName === 'notifications') {
             await renderNotificationsView();
@@ -12975,9 +12979,6 @@ function updateSidebarByRole() {
         </button>
         <button onclick="navigateView('timer')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
             <i data-lucide="timer" class="w-5 h-5 shrink-0 text-[#F59E0B]"></i> <span class="text-left flex-1 leading-snug">Çalışma Zamanlayıcısı</span>
-        </button>
-        <button onclick="navigateView('ai-coach')" class="nav-item w-full flex items-center justify-start text-left gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-[#A8B3C7] hover:text-white hover:bg-[#172238] transition">
-            <i data-lucide="sparkles" class="w-5 h-5 shrink-0 text-[#7C6AE6]"></i> <span class="text-left flex-1 leading-snug">AI Koç Asistanı</span>
         </button>
         `;
     } else if (role === 'COACH') {
